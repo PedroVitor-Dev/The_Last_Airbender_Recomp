@@ -457,9 +457,7 @@ uint32_t Cpu::step() {
 
     case Op::SWI: {
         const uint32_t number = t_ ? in.swi_comment : (in.swi_comment >> 16);
-        if (!bios_swi(gba_, number)) {
-            std::fprintf(stderr, "[bios] SWI 0x%02X não suportada em 0x%08X\n", number, pc);
-        }
+        bios_swi(gba_, number); // SWIs desconhecidas são avisadas (uma vez) em bios_swi
         cycles += 3;
         break;
     }

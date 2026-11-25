@@ -1,4 +1,4 @@
-# Configura o ambiente MSVC x64 e compila com CMake + Ninja.
+﻿# Configura o ambiente MSVC x64 e compila com CMake + Ninja.
 # Uso: .\scripts\build.ps1 [-Config Debug|Release] [-BuildDir <pasta>]
 #   -BuildDir permite compilar em outra pasta enquanto build\release está em uso
 #   (ex.: o jogo aberto trava o tlagba.exe).

@@ -14,6 +14,7 @@
 
 #include "analysis.h"
 #include "emitter.h"
+#include "synth.h"
 #include "core/rom.h"
 
 namespace fs = std::filesystem;
@@ -26,7 +27,8 @@ int usage() {
                  "  tlarecomp info    <rom.gba>\n"
                  "  tlarecomp analyze <rom.gba> [-o <dir>] [--config <arquivo>] [--disasm] [--no-scan] [--emit <dir>]\n"
                  "  tlarecomp emit    <rom.gba> (= analyze --emit generated/recomp)\n"
-                 "  tlarecomp dis     <rom.gba> <endereço> <n> arm|thumb [--at <endereço de execução>]\n");
+                 "  tlarecomp dis     <rom.gba> <endereço> <n> arm|thumb [--at <endereço de execução>]\n"
+                 "  tlarecomp synth   <saida.gba> <saida.cfg> <n> [semente]   (ROM de teste do emissor)\n");
     return 2;
 }
 
@@ -70,7 +72,7 @@ int cmd_info(const char* path) {
 // Desmonta n instruções em linha reta (útil para código copiado para a RAM).
 int cmd_dis(int argc, char** argv) {
     if (argc < 4) return usage();
-    auto rom = load_supported(argv[0]);
+    auto rom = core::Rom::load(argv[0]); // qualquer ROM (inclusive a sintética)
     if (!rom) return 1;
     const uint32_t src = static_cast<uint32_t>(std::stoul(argv[1], nullptr, 0));
     const uint32_t count = static_cast<uint32_t>(std::stoul(argv[2], nullptr, 0));
@@ -130,18 +132,21 @@ int cmd_analyze(int argc, char** argv, bool emit) {
     fs::path out_dir = "generated/analysis";
     fs::path emit_dir = emit ? "generated/recomp" : "";
     std::string config = "config/functions.txt";
-    bool disasm = false, scan = true;
+    bool disasm = false, scan = true, any_rom = false;
     for (int i = 0; i < argc; ++i) {
         if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--config") && i + 1 < argc) config = argv[++i];
         else if (!std::strcmp(argv[i], "--disasm")) disasm = true;
         else if (!std::strcmp(argv[i], "--emit") && i + 1 < argc) emit_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--no-scan")) scan = false;
+        else if (!std::strcmp(argv[i], "--any-rom")) any_rom = true; // ROM sintética de teste
         else if (!rom_path) rom_path = argv[i];
         else return usage();
     }
     if (!rom_path) return usage();
-    auto rom = load_supported(rom_path);
+    std::optional<core::Rom> rom;
+    if (any_rom) rom = core::Rom::load(rom_path);
+    else rom = load_supported(rom_path);
     if (!rom) return 1;
 
     recomp::Analyzer a(*rom);
@@ -150,7 +155,7 @@ int cmd_analyze(int argc, char** argv, bool emit) {
         std::fprintf(stderr, "erro: %s\n", err.c_str());
         return 1;
     }
-    a.add_entry(rom->header().entry_point, false, recomp::EntryReason::Entry);
+    if (!any_rom) a.add_entry(rom->header().entry_point, false, recomp::EntryReason::Entry);
     if (scan) a.scan_code_pointers();
     a.run();
     if (scan) {
@@ -243,5 +248,12 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "analyze")) return cmd_analyze(argc - 2, argv + 2, false);
     if (!std::strcmp(argv[1], "emit")) return cmd_analyze(argc - 2, argv + 2, true);
     if (!std::strcmp(argv[1], "dis")) return cmd_dis(argc - 2, argv + 2);
+    if (!std::strcmp(argv[1], "synth") && argc >= 5) {
+        const uint32_t n = static_cast<uint32_t>(std::stoul(argv[4]));
+        const uint32_t seed = argc >= 6 ? static_cast<uint32_t>(std::stoul(argv[5])) : 1;
+        recomp::write_synth_rom(argv[2], argv[3], n, seed);
+        std::printf("ROM sintética: %s (%u funções), config: %s\n", argv[2], n, argv[3]);
+        return 0;
+    }
     return usage();
 }

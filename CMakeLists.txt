@@ -24,7 +24,8 @@ target_include_directories(tla_core PUBLIC core/include)
 add_executable(tlarecomp
     recompiler/src/main.cpp
     recompiler/src/analysis.cpp
-    recompiler/src/emitter.cpp)
+    recompiler/src/emitter.cpp
+    recompiler/src/synth.cpp)
 target_link_libraries(tlarecomp PRIVATE tla_core)
 
 # Runtime do GBA (hardware + interpretador)
@@ -65,6 +66,17 @@ endif()
 # Teste diferencial recompilado × interpretador
 add_executable(tlaverify frontend/src/verify.cpp)
 target_link_libraries(tlaverify PRIVATE tla_gba tla_recomp)
+
+# Fuzzer de instruções (código gerado da ROM sintética em generated/synth; ver
+# scripts/test_synth.ps1). Executável separado: a tabela gerada tem os mesmos nomes.
+file(GLOB TLA_SYNTH_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/generated/synth/*.cpp)
+if(TLA_SYNTH_SOURCES)
+    add_executable(test_synth frontend/src/test_synth.cpp ${TLA_SYNTH_SOURCES})
+    target_link_libraries(test_synth PRIVATE tla_gba)
+    if(MSVC)
+        set_source_files_properties(${TLA_SYNTH_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0;/bigobj")
+    endif()
+endif()
 
 # Testes
 enable_testing()

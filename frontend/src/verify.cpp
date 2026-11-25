@@ -1,15 +1,20 @@
 // tlaverify — teste diferencial: código recompilado × interpretador, função a função.
 //
-//   tlaverify <rom> [--frames N] [--per-function K] [--press TECLA@ini-fim ...] [--report arq]
+//   tlaverify <rom> [--frames N] [--per-function K] [--fuzz K] [--seed S]
+//                   [--press TECLA@ini-fim ...] [--report arq] [--only 0xADDR]
 //
-// O jogo roda no interpretador (com o roteiro de teclas). Nas primeiras K vezes em que
-// cada função recompilada é chamada, o estado completo é copiado para duas instâncias de
-// rascunho, que executam a função até ela retornar: uma pelo interpretador, outra pelo
-// código recompilado (IRQs mascaradas, vigia de ciclos). Registradores, flags e memórias
-// (EWRAM, IWRAM, VRAM, paleta, OAM) precisam ficar idênticos.
+// Fase 1 (replay): o jogo roda no interpretador com o roteiro de teclas. Nas primeiras K
+// chamadas de cada função recompilada, o estado completo é copiado para duas instâncias de
+// rascunho que executam a função até ela retornar — uma interpretada, outra recompilada.
 //
-// Funções que acessam IO podem divergir só por timing (VCOUNT, timers): essas divergências
-// são marcadas como inconclusivas, não como falha.
+// Fase 2 (fuzz, opcional): a partir do estado final do jogo, TODAS as funções da tabela são
+// chamadas diretamente, K vezes cada, com registradores sorteados (zeros, valores pequenos,
+// ponteiros válidos para EWRAM/IWRAM/ROM, valores reais) e um endereço de retorno mágico.
+// Entradas sem sentido para o jogo ainda precisam produzir o mesmo resultado nos dois.
+//
+// Nos dois casos: IRQs mascaradas, vigia de ciclos, e registradores, flags e memórias
+// (EWRAM, IWRAM, VRAM, paleta, OAM) precisam ficar idênticos. Divergências em execuções que
+// acessaram IO são marcadas como inconclusivas (timing difere entre os modos).
 
 #include <chrono>
 #include <cstdio>
@@ -17,12 +22,14 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "core/rom.h"
+#include "difftest.h"
 #include "gba/gba.h"
 
 extern const gba::RecompEntry tla_recomp_table[];
@@ -30,99 +37,18 @@ extern const size_t tla_recomp_count;
 extern const gba::RecompOverlay tla_recomp_overlays[];
 extern const size_t tla_recomp_overlay_count;
 
+using namespace difftest;
+
 namespace {
 
-constexpr uint64_t kBudgetCycles = 16 * 280896; // ~16 quadros por chamada
+constexpr uint64_t kReplayBudget = 16 * 280896; // ~16 quadros
+constexpr uint64_t kFuzzBudget = 4 * 280896;    // ~4 quadros
+constexpr uint32_t kMagicReturn = 0x08000004;   // endereço de retorno do fuzz (sem código)
 
 struct Press {
     uint16_t key;
     uint64_t from, to;
 };
-
-enum class Verdict { Ok, Diverge, IoTiming, Timeout, Error, NotCall };
-
-struct Result {
-    Verdict v;
-    std::string detail;
-};
-
-struct Run {
-    bool ok = false;
-    bool timeout = false;
-    std::string error;
-    uint64_t io = 0;
-};
-
-Run run_interp(gba::Gba& g, uint32_t ret) {
-    Run r;
-    const uint64_t io0 = g.bus.io_accesses;
-    g.cycle_limit = g.cycles + kBudgetCycles;
-    try {
-        g.resume_until(ret);
-        r.ok = true;
-    } catch (const gba::StopRequested&) {
-        r.timeout = true;
-    } catch (const std::exception& e) {
-        r.error = e.what();
-    }
-    r.io = g.bus.io_accesses - io0;
-    g.cycle_limit = UINT64_MAX;
-    return r;
-}
-
-Run run_recomp(gba::Gba& g, uint32_t pc, bool thumb, uint32_t ret) {
-    Run r;
-    const uint64_t io0 = g.bus.io_accesses;
-    g.cycle_limit = g.cycles + kBudgetCycles;
-    try {
-        g.call_function(pc, thumb);
-        if (g.cpu.r[15] != ret) g.resume_until(ret);
-        r.ok = true;
-    } catch (const gba::StopRequested&) {
-        r.timeout = true;
-    } catch (const std::exception& e) {
-        r.error = e.what();
-    }
-    r.io = g.bus.io_accesses - io0;
-    g.cycle_limit = UINT64_MAX;
-    return r;
-}
-
-template <size_t N>
-std::string diff_mem(const char* name, uint32_t base, const std::array<uint8_t, N>& a, const std::array<uint8_t, N>& b) {
-    if (std::memcmp(a.data(), b.data(), N) == 0) return {};
-    size_t first = 0, count = 0;
-    for (size_t i = 0; i < N; ++i)
-        if (a[i] != b[i]) {
-            if (!count) first = i;
-            ++count;
-        }
-    char buf[160];
-    std::snprintf(buf, sizeof buf, "%s: %zu bytes diferentes, 1º em 0x%08zX (interp %02X, recomp %02X); ", name, count,
-                  base + first, a[first], b[first]);
-    return buf;
-}
-
-std::string compare(const gba::Gba& a, const gba::Gba& b) {
-    std::string d;
-    for (int i = 0; i < 16; ++i)
-        if (a.cpu.r[i] != b.cpu.r[i]) {
-            char buf[80];
-            std::snprintf(buf, sizeof buf, "r%d: 0x%08X × 0x%08X; ", i, a.cpu.r[i], b.cpu.r[i]);
-            d += buf;
-        }
-    if (a.cpu.cpsr() != b.cpu.cpsr()) {
-        char buf[80];
-        std::snprintf(buf, sizeof buf, "cpsr: 0x%08X × 0x%08X; ", a.cpu.cpsr(), b.cpu.cpsr());
-        d += buf;
-    }
-    d += diff_mem("EWRAM", 0x02000000, a.bus.ewram, b.bus.ewram);
-    d += diff_mem("IWRAM", 0x03000000, a.bus.iwram, b.bus.iwram);
-    d += diff_mem("VRAM", 0x06000000, a.bus.vram, b.bus.vram);
-    d += diff_mem("PAL", 0x05000000, a.bus.palette, b.bus.palette);
-    d += diff_mem("OAM", 0x07000000, a.bus.oam, b.bus.oam);
-    return d;
-}
 
 uint16_t key_from_name(const std::string& n) {
     static const std::pair<const char*, uint16_t> keys[] = {
@@ -138,17 +64,22 @@ uint16_t key_from_name(const std::string& n) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "uso: tlaverify <rom> [--frames N] [--per-function K] [--press TECLA@ini-fim] [--report arq]\n");
+        std::fprintf(stderr, "uso: tlaverify <rom> [--frames N] [--per-function K] [--fuzz K] [--seed S] "
+                             "[--press TECLA@ini-fim] [--report arq] [--only 0xADDR]\n");
         return 2;
     }
     uint64_t frames = 3000;
-    int per_function = 2;
+    int per_function = 2, fuzz = 0;
+    uint32_t seed = 1, only = 0;
     std::string report_path = "build/verify_report.txt";
     std::vector<Press> script;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--frames" && i + 1 < argc) frames = std::stoull(argv[++i]);
         else if (a == "--per-function" && i + 1 < argc) per_function = std::stoi(argv[++i]);
+        else if (a == "--fuzz" && i + 1 < argc) fuzz = std::stoi(argv[++i]);
+        else if (a == "--seed" && i + 1 < argc) seed = static_cast<uint32_t>(std::stoul(argv[++i]));
+        else if (a == "--only" && i + 1 < argc) only = static_cast<uint32_t>(std::stoul(argv[++i], nullptr, 0));
         else if (a == "--report" && i + 1 < argc) report_path = argv[++i];
         else if (a == "--press" && i + 1 < argc) {
             const std::string s = argv[++i];
@@ -173,17 +104,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto main_g = std::make_unique<gba::Gba>(*rom);     // jogo de referência (interpretador)
-    auto interp_g = std::make_unique<gba::Gba>(*rom);   // rascunho: interpretador
-    auto recomp_g = std::make_unique<gba::Gba>(*rom);   // rascunho: recompilado
-    recomp_g->set_recomp(tla_recomp_table, tla_recomp_count, tla_recomp_overlays, tla_recomp_overlay_count);
+    auto main_g = std::make_unique<gba::Gba>(*rom); // jogo de referência (interpretador)
+    Verifier verifier(*rom, tla_recomp_table, tla_recomp_count, tla_recomp_overlays, tla_recomp_overlay_count);
 
-    std::unordered_map<uint32_t, int> entries; // endereço|thumb → vezes testada
+    // ── Fase 1: replay de chamadas reais ──
+    std::unordered_map<uint32_t, int> entries;
     for (size_t i = 0; i < tla_recomp_count; ++i) entries[tla_recomp_table[i].addr] = 0;
-
-    std::map<Verdict, size_t> totals;
-    std::vector<std::pair<uint32_t, Result>> failures, inconclusive;
-    std::unordered_set<uint32_t> tested_funcs;
+    Tally replay;
     bool testing = false;
     uint32_t last_pc = 0;
 
@@ -191,91 +118,82 @@ int main(int argc, char** argv) {
         if (testing) return;
         const uint32_t prev = last_pc;
         last_pc = pc;
-        // Só testa entradas recém-chamadas (bl, ou "mov lr, pc; bx"): lr aponta para
-        // logo depois da instrução anterior. Entradas por salto têm lr sem relação.
+        // Só entradas recém-chamadas: lr aponta para logo depois da instrução anterior.
         if ((main_g->cpu.r[14] & ~1u) != prev + 4) return;
         const uint32_t key = pc | (thumb ? 1u : 0u);
+        if (only && (key & ~1u) != only) return;
         auto it = entries.find(key);
         if (it == entries.end() || it->second >= per_function) return;
         ++it->second;
         testing = true;
-        tested_funcs.insert(key);
-
-        // Estado no início da função (o PC ainda aponta para ela).
         const uint32_t ret = main_g->cpu.r[14] & ~1u;
-        interp_g->copy_state_from(*main_g);
-        recomp_g->copy_state_from(*main_g);
-        interp_g->cpu.r[15] = recomp_g->cpu.r[15] = pc;
-        interp_g->cpu.i_ = recomp_g->cpu.i_ = true; // IRQs mascaradas nos dois
-
-        const uint32_t sp0 = main_g->cpu.r[13];
-        const Run ri = run_interp(*interp_g, ret);
-        Result res;
-        if (ri.ok && interp_g->cpu.r[13] != sp0) {
-            // "Retornou" com outra pilha: era um bl usado como salto, não uma chamada.
-            res = {Verdict::NotCall, "bl usado como salto (pilha diferente no retorno)"};
-        } else if (!ri.ok) {
-            res = {ri.timeout ? Verdict::Timeout : Verdict::Error, ri.timeout ? "interpretador não retornou" : ri.error};
-        } else {
-            const Run rr = run_recomp(*recomp_g, pc, thumb, ret);
-            if (!rr.ok) {
-                res = {Verdict::Diverge, rr.timeout ? "recompilado não retornou" : "recompilado: " + rr.error};
-            } else {
-                const std::string d = compare(*interp_g, *recomp_g);
-                if (d.empty()) res = {Verdict::Ok, {}};
-                else if (ri.io || rr.io) res = {Verdict::IoTiming, d};
-                else res = {Verdict::Diverge, d};
-            }
-        }
-        ++totals[res.v];
-        if (res.v == Verdict::Diverge) failures.emplace_back(key, res);
-        else if (res.v != Verdict::Ok) inconclusive.emplace_back(key, res);
+        replay.add(key, verifier.evaluate(*main_g, pc, thumb, ret, kReplayBudget, [](gba::Gba&) {}));
         testing = false;
     };
 
-    const auto t0 = std::chrono::steady_clock::now();
     auto keys_for = [&](uint64_t f) {
         uint16_t k = 0;
         for (const auto& p : script)
             if (f >= p.from && f <= p.to) k |= p.key;
         return k;
     };
+    auto t0 = std::chrono::steady_clock::now();
     main_g->set_keys(keys_for(0));
     main_g->run([&] {
         const uint64_t f = main_g->frame_count;
-        if (f % 500 == 0)
+        if (f % 1000 == 0)
             std::printf("  quadro %llu: %zu funções testadas, %zu divergências\n", static_cast<unsigned long long>(f),
-                        tested_funcs.size(), failures.size());
+                        replay.funcs.size(), replay.failures.size());
         main_g->set_keys(keys_for(f));
         return f < frames;
     });
-    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    main_g->cpu.on_exec = nullptr;
+    replay.print("Replay", tla_recomp_count, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
 
-    const size_t total = totals[Verdict::Ok] + totals[Verdict::Diverge] + totals[Verdict::IoTiming] +
-                         totals[Verdict::Timeout] + totals[Verdict::Error] + totals[Verdict::NotCall];
-    std::printf("\n%zu execuções testadas (%zu funções distintas de %zu) em %.1f s\n", total, tested_funcs.size(),
-                tla_recomp_count, secs);
-    std::printf("  idênticas            : %zu\n", totals[Verdict::Ok]);
-    std::printf("  DIVERGENTES          : %zu\n", totals[Verdict::Diverge]);
-    std::printf("  inconclusivas (IO)   : %zu\n", totals[Verdict::IoTiming]);
-    std::printf("  inconclusivas (tempo): %zu\n", totals[Verdict::Timeout]);
-    std::printf("  inconclusivas (erro) : %zu\n", totals[Verdict::Error]);
-    std::printf("  não eram chamadas    : %zu\n", totals[Verdict::NotCall]);
+    // ── Fase 2: fuzz de todas as funções ──
+    Tally fz;
+    if (fuzz > 0) {
+        t0 = std::chrono::steady_clock::now();
+        const uint32_t base_sp = main_g->cpu.r[13] - 0x200; // abaixo da pilha atual, ainda na IWRAM
+        for (size_t i = 0; i < tla_recomp_count; ++i) {
+            const uint32_t key = tla_recomp_table[i].addr;
+            const uint32_t pc = key & ~1u;
+            const bool thumb = key & 1;
+            if (only && pc != only) continue;
+            for (int k = 0; k < fuzz; ++k) {
+                std::mt19937 rng(seed * 0x9E3779B9u ^ key ^ (static_cast<uint32_t>(k) << 24));
+                std::array<uint32_t, 16> regs{};
+                for (int r = 0; r < 13; ++r) {
+                    switch (rng() % 8) {
+                    case 0: regs[r] = 0; break;
+                    case 1: regs[r] = rng() % 4; break;
+                    case 2: regs[r] = rng() % 256; break;
+                    case 3: regs[r] = 0x02000000u + (rng() % 0x3FF00u & ~3u); break;
+                    case 4: regs[r] = 0x03000000u + (rng() % 0x7000u & ~3u); break;
+                    case 5: regs[r] = 0x08000000u + (rng() % 0x700000u & ~3u); break;
+                    case 6: regs[r] = main_g->cpu.r[r]; break;
+                    default: regs[r] = rng(); break;
+                    }
+                }
+                const uint32_t flags = rng() & 0xF0000000u;
+                const uint32_t ret = kMagicReturn;
+                const Result res = verifier.evaluate(*main_g, pc, thumb, ret, kFuzzBudget, [&](gba::Gba& g) {
+                    for (int r = 0; r < 13; ++r) g.cpu.r[r] = regs[r];
+                    g.cpu.set_cpsr(flags | gba::MODE_SYS);
+                    g.cpu.r[13] = base_sp;
+                    g.cpu.r[14] = ret | (thumb ? 1u : 0u);
+                });
+                fz.add(key, res);
+            }
+            if ((i + 1) % 500 == 0)
+                std::printf("  fuzz: %zu/%zu funções, %zu divergências\n", i + 1, tla_recomp_count, fz.failures.size());
+        }
+        fz.print("Fuzz", tla_recomp_count, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
 
     std::ofstream rep(report_path);
-    auto dump = [&](const char* title, const std::vector<std::pair<uint32_t, Result>>& list, size_t show) {
-        rep << "== " << title << " (" << list.size() << ")\n";
-        size_t n = 0;
-        for (const auto& [key, r] : list) {
-            char head[64];
-            std::snprintf(head, sizeof head, "0x%08X %s: ", key & ~1u, (key & 1) ? "thumb" : "arm");
-            rep << head << r.detail << "\n";
-            if (n++ < show) std::printf("  %s%s\n", head, r.detail.substr(0, 200).c_str());
-        }
-    };
-    if (!failures.empty()) std::printf("\nDivergências:\n");
-    dump("DIVERGENTES", failures, 15);
-    dump("inconclusivas", inconclusive, 0);
+    replay.dump(rep, "replay", 10);
+    if (fuzz > 0) fz.dump(rep, "fuzz", 25);
     std::printf("Relatório: %s\n", report_path.c_str());
-    return failures.empty() ? 0 : 1;
+    return replay.failures.empty() && fz.failures.empty() ? 0 : 1;
 }

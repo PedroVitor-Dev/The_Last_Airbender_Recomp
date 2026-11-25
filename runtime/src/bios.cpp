@@ -1,7 +1,9 @@
 // BIOS do GBA em HLE. Nenhum código da BIOS original é usado: o único código ARM na
 // região da BIOS é o stub do vetor de IRQ abaixo, escrito para este projeto.
 
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -208,7 +210,15 @@ bool bios_swi(Gba& g, uint32_t n) {
     case 0x14: rl(g, false); return true;
     case 0x15: rl(g, true); return true;
     case 0xAB: return true; // semihosting de debug (printf do desenvolvedor) — ignorado
-    default: return false;
+    default: {
+        // Avisa uma vez por número (código lixo executado pode gerar milhares).
+        static std::array<bool, 256> warned{};
+        if (!warned[n & 0xFF]) {
+            warned[n & 0xFF] = true;
+            std::fprintf(stderr, "[bios] SWI 0x%02X não suportada (pc=0x%08X)\n", n, g.cpu.r[15]);
+        }
+        return false;
+    }
     }
 }
 

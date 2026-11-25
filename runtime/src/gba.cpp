@@ -180,7 +180,7 @@ void Gba::sync_at(uint32_t pc) {
 
 void Gba::swi(uint32_t number, uint32_t next_pc) {
     cpu.r[15] = next_pc;
-    if (!bios_swi(*this, number)) std::fprintf(stderr, "[bios] SWI 0x%02X não suportada\n", number);
+    bios_swi(*this, number); // SWIs desconhecidas são avisadas (uma vez) em bios_swi
     if (cpu.halted) halt_wait();
     if (!cpu.i_ && io.irq_ready()) {
         service_irq();
