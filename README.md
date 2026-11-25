@@ -4,227 +4,228 @@
 
 # Avatar: The Last Airbender — Recomp
 
-**O clássico do Game Boy Advance rodando nativo no PC.**
-Cada função ARM/Thumb da ROM vira C++ e roda sobre uma reimplementação do hardware do GBA.
+**The Game Boy Advance classic, running natively on PC.**
+Every ARM/Thumb function in the ROM becomes C++ and runs on top of a reimplementation of the GBA hardware.
 
-![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![CMake](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
-![Licença](https://img.shields.io/badge/licen%C3%A7a-GPL--3.0-BD2100)
-![Status](https://img.shields.io/badge/status-jog%C3%A1vel-5A2918)
+![License](https://img.shields.io/badge/license-GPL--3.0-BD2100)
+![Status](https://img.shields.io/badge/status-playable-5A2918)
 
-[Sobre](#-sobre) · [Destaques](#-destaques) · [Como jogar](#-como-jogar) · [Controles](#-controles) ·
-[Como funciona](#-como-funciona) · [Roadmap](#-roadmap) · [Desenvolvimento](#-desenvolvimento) · [Apoie](#-apoie)
+[About](#-about) · [Highlights](#-highlights) · [How to play](#-how-to-play) · [Controls](#-controls) ·
+[How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Development](#-development) · [Support](#-support)
 
 </div>
 
 > [!IMPORTANT]
-> Este repositório **não contém a ROM nem assets do jogo**. Você precisa do seu próprio dump do
-> cartucho americano (`BQZE`).
+> This repository **does not contain the ROM or any game assets**. You need your own dump of the
+> US cartridge (`BQZE`).
 
-## 🌀 Sobre
+## 🌀 About
 
-*Avatar: The Last Airbender* (THQ, 2006) para GBA, recompilado estaticamente para PC. Não é um
-emulador comum. O recompilador `tlarecomp` analisa a ROM, encontra **3 640 funções** e gera uma
-função C++ para cada uma. O resultado é compilado junto com um runtime que reimplementa o
-hardware do GBA: vídeo, som, DMA, timers, interrupções e save.
+*Avatar: The Last Airbender* (THQ, 2006) for the GBA, statically recompiled for PC. This is not a
+regular emulator. The `tlarecomp` recompiler analyzes the ROM, finds **3,640 functions** and
+generates one C++ function for each of them. The result is compiled together with a runtime that
+reimplements the GBA hardware: video, sound, DMA, timers, interrupts and saves.
 
-O jogo roda do começo ao fim pelo código recompilado. Em 7 000 quadros, só **2 instruções**
-passam pelo interpretador de reserva, e os testes diferenciais contra o interpretador dão
-**0 divergências**.
+The game runs from start to finish through the recompiled code. Over 7,000 frames, only
+**2 instructions** go through the fallback interpreter, and differential tests against the
+interpreter show **0 divergences**.
 
-## ✨ Destaques
+## ✨ Highlights
 
 | | |
 |---|---|
-| ⚡ **Rápido** | ~56× a velocidade do GBA sem limite (o código recompilado sozinho roda a ~216×) |
-| 🎮 **Controle de verdade** | XInput (Xbox, 8BitDo em modo X…), com analógico, gatilhos e botão home |
-| 🛠️ **Tela de configurações** | No visual do próprio jogo. A partida fica congelada enquanto ela está aberta |
-| 💾 **Save states** | 10 slots, carregamento transacional (um estado ruim nunca corrompe a partida) |
-| 🖥️ **Feito para PC** | Tela cheia sem borda, pixels nítidos com proporção correta, turbo, pausa, capturas PNG |
-| 🔊 **Som fiel** | FIFOs + 4 canais PSG a 48 kHz via XAudio2. O áudio é o relógio, então são 60 fps estáveis |
-| 🧪 **Verificado** | Testes diferenciais, fuzzer de instruções, teste de mutação e quadros de referência |
+| ⚡ **Fast** | ~56× GBA speed when unthrottled (the recompiled code alone runs at ~216×) |
+| 🎮 **Real gamepad support** | XInput (Xbox, 8BitDo in X mode…), with analog stick, triggers and the home button |
+| 🛠️ **Settings screen** | Styled after the game itself. The game freezes while it is open |
+| 💾 **Save states** | 10 slots, transactional loading (a bad state never corrupts your game) |
+| 🖥️ **Made for PC** | Borderless fullscreen, crisp pixels at the correct aspect ratio, turbo, pause, PNG screenshots |
+| 🔊 **Faithful sound** | FIFOs + 4 PSG channels at 48 kHz via XAudio2. Audio drives the clock, so 60 fps stays steady |
+| 🧪 **Verified** | Differential tests, an instruction fuzzer, mutation testing and reference frames |
 
 <div align="center">
-  <img src="docs/images/menu.png" alt="Tela de configurações" width="480"><br>
-  <sub>A tela de configurações, desenhada com a paleta das caixas de diálogo do jogo.</sub>
+  <img src="docs/images/menu.png" alt="Settings screen" width="480"><br>
+  <sub>The settings screen, drawn with the palette of the game's dialog boxes (UI currently in Portuguese).</sub>
 </div>
 
-## 🎮 Como jogar
+## 🎮 How to play
 
-### Requisitos
+### Requirements
 
-- Windows 10/11 com **Visual Studio 2022 Build Tools** (C++, CMake, Ninja)
+- Windows 10/11 with **Visual Studio 2022 Build Tools** (C++, CMake, Ninja)
 - **Python 3.10+**
-- Sua ROM: `BQZE`, SHA-1 `9d864e9b3ccce4e5e1b1c566afa0d06088e88dfd`, na pasta `roms/`
+- Your ROM: `BQZE`, SHA-1 `9d864e9b3ccce4e5e1b1c566afa0d06088e88dfd`, in the `roms/` folder
 
-### Compilar
+### Build
 
 ```powershell
-.\scripts\build.ps1                                                # 1) ferramentas e runtime
-.\build\release\tlarecomp.exe emit "roms\<sua-rom>.gba"            # 2) gera generated\recomp\
-.\scripts\build.ps1                                                # 3) compila o código gerado (~1 min)
+.\scripts\build.ps1                                                # 1) tools and runtime
+.\build\release\tlarecomp.exe emit "roms\<your-rom>.gba"           # 2) generates generated\recomp\
+.\scripts\build.ps1                                                # 3) compiles the generated code (~1 min)
 ```
 
 > [!TIP]
-> Sem o passo 2, o `tlagba` roda só com o interpretador (cerca de 3× mais lento). Para compilar
-> com o jogo aberto, use outra pasta: `.\scripts\build.ps1 -BuildDir build\dev`.
+> Without step 2, `tlagba` runs on the interpreter only (about 3× slower). To build while the game
+> is running, use another folder: `.\scripts\build.ps1 -BuildDir build\dev`.
 
-### Jogar
+### Play
 
 ```powershell
-.\build\release\tlagba.exe "roms\<sua-rom>.gba"
+.\build\release\tlagba.exe "roms\<your-rom>.gba"
 ```
 
-O save do jogo (EEPROM) fica em `roms\<sua-rom>.sav`.
+The in-game save (EEPROM) is stored in `roms\<your-rom>.sav`.
 
-## 🕹️ Controles
+## 🕹️ Controls
 
-| GBA | Teclado | Controle |
-|-----|---------|----------|
-| Direcional | Setas | Direcional ou analógico esquerdo |
-| A / B | X / Z | A / B (e X) |
+| GBA | Keyboard | Gamepad |
+|-----|----------|---------|
+| D-pad | Arrow keys | D-pad or left stick |
+| A / B | X / Z | A / B (and X) |
 | L / R | A / S | LB, LT / RB, RT |
 | Start / Select | Enter / Backspace | Start / Back |
 
-Tudo pode ser remapeado na tela de configurações.
+Everything can be remapped in the settings screen.
 
-### Tela de configurações
+### Settings screen
 
-Abre com **Esc**, **F1**, o botão **Xbox/home** do controle ou **Back+Start**. O jogo congela
-enquanto ela está aberta. Nela você encontra:
+Open it with **Esc**, **F1**, the gamepad's **Xbox/home** button or **Back+Start**. The game
+freezes while it is open. In it you can:
 
-- continuar, salvar e carregar estado (10 slots), sair do jogo;
-- tela cheia, tamanho da janela (1×–8×), volume;
-- analógico como direcional;
-- remapear teclado e controle (escolha o botão e aperte a nova tecla);
-- restaurar padrões.
+- resume, save and load states (10 slots), quit the game;
+- toggle fullscreen, change the window size (1×–8×) and the volume;
+- use the analog stick as a D-pad;
+- remap the keyboard and the gamepad (pick a button, then press the new key);
+- restore the defaults.
 
-As escolhas são gravadas em `tlagba.ini`, ao lado do executável. O arquivo é comentado e também
-pode ser editado à mão.
+Your choices are saved to `tlagba.ini`, next to the executable. The file is commented and can
+also be edited by hand.
 
-### Atalhos
+### Shortcuts
 
-| Tecla | Ação |
-|-------|------|
-| F5 / F9 | salvar / carregar estado (`roms\states\`) |
-| F6 / F7 | slot anterior / próximo |
-| Tab (segurar) | turbo |
-| P | pausa |
-| F11 ou Alt+Enter | tela cheia |
-| F12 | captura PNG (`roms\screenshots\`) |
+| Key | Action |
+|-----|--------|
+| F5 / F9 | save / load state (`roms\states\`) |
+| F6 / F7 | previous / next slot |
+| Tab (hold) | turbo |
+| P | pause |
+| F11 or Alt+Enter | fullscreen |
+| F12 | PNG screenshot (`roms\screenshots\`) |
 
 <details>
-<summary><b>Opções de linha de comando</b></summary>
+<summary><b>Command-line options</b></summary>
 
-| Opção | Efeito |
-|-------|--------|
-| `--interp` | ignora o código recompilado |
-| `--mute` | sem áudio (ritmo pelo relógio) |
-| `--scale N` | tamanho da janela (sobrepõe o ini) |
-| `--load-state f` | começa a partir de um save state |
-| `--headless --frames N` | sem janela, para testes |
-| `--shot f.png` / `--shot-every K prefixo` | capturas PNG |
-| `--press TECLA@ini-fim` | roteiro de botões |
-| `--wav f.wav` | grava o áudio |
-| `--save-state-at N f` / `--load-state-at N f` | grava / carrega um estado no quadro N (headless, testes) |
-| `--fallback-log f.txt` | endereços executados pelo interpretador |
-| `--profile` / `--no-render` | tempo por subsistema / pula a renderização (diagnóstico) |
+| Option | Effect |
+|--------|--------|
+| `--interp` | ignore the recompiled code |
+| `--mute` | no audio (paced by the system clock) |
+| `--scale N` | window size (overrides the ini) |
+| `--load-state f` | start from a save state |
+| `--headless --frames N` | no window, for tests |
+| `--shot f.png` / `--shot-every K prefix` | PNG screenshots |
+| `--press KEY@start-end` | scripted button presses |
+| `--wav f.wav` | record the audio |
+| `--save-state-at N f` / `--load-state-at N f` | save / load a state at frame N (headless, tests) |
+| `--fallback-log f.txt` | addresses executed by the interpreter |
+| `--profile` / `--no-render` | time per subsystem / skip rendering (diagnostics) |
 
 </details>
 
-## 🔧 Como funciona
+## 🔧 How it works
 
 ```
-            ┌──────────────┐  análise + tradução  ┌────────────────────┐
- ROM (.gba) │  tlarecomp   │ ───────────────────▶ │ generated/recomp/  │
- ─────────▶ │  (C++20)     │                      │ 1 função C++ por   │
-            └──────────────┘                      │ função ARM/Thumb   │
-                   ▲ config/functions.txt          └─────────┬──────────┘
-                                                             │ compila junto
-            ┌────────────────────────────────────────────────▼─────────┐
+            ┌──────────────┐  analysis + translation  ┌────────────────────┐
+ ROM (.gba) │  tlarecomp   │ ───────────────────────▶ │ generated/recomp/  │
+ ─────────▶ │  (C++20)     │                          │ 1 C++ function per │
+            └──────────────┘                          │ ARM/Thumb function │
+                   ▲ config/functions.txt             └─────────┬──────────┘
+                                                                │ compiled together
+            ┌───────────────────────────────────────────────────▼──────┐
             │ runtime (C++20)                                          │
-            │  CPU · memória · PPU · APU · DMA · timers · IRQ · EEPROM │
-            │  BIOS HLE · agendador por eventos · interpretador        │
+            │  CPU · memory · PPU · APU · DMA · timers · IRQ · EEPROM  │
+            │  BIOS HLE · event scheduler · interpreter                │
             └───────────────────────────┬──────────────────────────────┘
                                         │
-                  tlagba (janela Win32 + XAudio2 / headless)  ·  tlaverify
+                  tlagba (Win32 window + XAudio2 / headless)  ·  tlaverify
 ```
 
-- **Recompilador:** decodifica ARM e Thumb numa IR comum, descobre funções por `BL`, ponteiros
-  e tabelas de switch, e emite C++ com os ciclos contados por bloco.
-- **Execução híbrida:** o código recompilado e o interpretador se alternam a qualquer momento.
-  Overlays copiados para a IWRAM (mixer de som, handler de IRQ) e saltos inesperados caem no
-  interpretador sem perder o estado.
-- **PPU:** modos 0–5, sprites afins, janelas e blending, com composição e efeitos de cor em
-  SSE2.
+- **Recompiler:** decodes ARM and Thumb into a shared IR, discovers functions through `BL` calls,
+  pointers and switch tables, and emits C++ with cycles counted per block.
+- **Hybrid execution:** recompiled code and the interpreter can hand off to each other at any
+  point. Overlays copied into IWRAM (sound mixer, IRQ handler) and unexpected jumps fall back to
+  the interpreter without losing state.
+- **PPU:** modes 0–5, affine sprites, windows and blending, with SSE2 compositing and color
+  effects.
 
-Mais detalhes em [ARCHITECTURE.md](docs/ARCHITECTURE.md), [TESTING.md](docs/TESTING.md),
-[PERFORMANCE.md](docs/PERFORMANCE.md) e [PAK_FORMAT.md](docs/PAK_FORMAT.md).
+More details (in Portuguese) in [ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[TESTING.md](docs/TESTING.md), [PERFORMANCE.md](docs/PERFORMANCE.md) and
+[PAK_FORMAT.md](docs/PAK_FORMAT.md).
 
 ## 🗺️ Roadmap
 
-| Fase | | |
-|------|---|---|
-| 0 — Fundação | ✅ | estrutura, validação da ROM, build |
-| 1 — Entender o código | ✅ | decodificador, descoberta de funções, extrator de assets |
-| 2 — Runtime + interpretador | ✅ | hardware completo, jogo jogável interpretado, áudio |
-| 3 — Recompilação | ✅ | jogo inteiro recompilado, verificação, desempenho |
-| 4 — Melhorias de PC | 🚧 | ✅ save states, controle, tela de configurações · ⏳ widescreen, mods |
+| Phase | | |
+|-------|---|---|
+| 0 — Foundation | ✅ | repository layout, ROM validation, build |
+| 1 — Understanding the code | ✅ | decoder, function discovery, asset extractor |
+| 2 — Runtime + interpreter | ✅ | full hardware, game playable through the interpreter, audio |
+| 3 — Recompilation | ✅ | whole game recompiled, verification, performance |
+| 4 — PC enhancements | 🚧 | ✅ save states, gamepad, settings screen · ⏳ widescreen, mods |
 
-Lista completa em [docs/ROADMAP.md](docs/ROADMAP.md).
+Full list in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## 🧑‍💻 Desenvolvimento
+## 🧑‍💻 Development
 
 <details>
-<summary><b>Ferramentas e testes</b></summary>
+<summary><b>Tools and tests</b></summary>
 
 ```powershell
-.\build\release\test_decoder.exe                                    # decodificador ARM/Thumb
-.\build\release\test_ppu.exe                                        # PPU contra a referência
-.\build\release\test_state.exe "roms\<sua-rom>.gba"                 # save states
-.\build\release\tlarecomp.exe analyze "roms\<sua-rom>.gba" --disasm # relatórios + disassembly
-.\build\release\tlarecomp.exe dis "roms\<sua-rom>.gba" 0x08097C30 56 arm --at 0x03000000
+.\build\release\test_decoder.exe                                     # ARM/Thumb decoder
+.\build\release\test_ppu.exe                                         # PPU against the reference
+.\build\release\test_state.exe "roms\<your-rom>.gba"                 # save states
+.\build\release\tlarecomp.exe analyze "roms\<your-rom>.gba" --disasm # reports + disassembly
+.\build\release\tlarecomp.exe dis "roms\<your-rom>.gba" 0x08097C30 56 arm --at 0x03000000
 ```
 
-Equivalência recompilado × interpretador (detalhes em [TESTING.md](docs/TESTING.md)):
+Recompiled × interpreter equivalence (details in [TESTING.md](docs/TESTING.md)):
 
 ```powershell
-.\build\release\tlaverify.exe "roms\<sua-rom>.gba" --frames 3000 --fuzz 5 --press START@900-905
-.\scripts\test_synth.ps1        # fuzzer de instruções (ROM sintética)
-.\scripts\mutation_test.ps1     # os testes ainda pegam bugs conhecidos?
-.\scripts\bench.ps1             # desempenho
+.\build\release\tlaverify.exe "roms\<your-rom>.gba" --frames 3000 --fuzz 5 --press START@900-905
+.\scripts\test_synth.ps1        # instruction fuzzer (synthetic ROM)
+.\scripts\mutation_test.ps1     # do the tests still catch known bugs?
+.\scripts\bench.ps1             # performance
 ```
 
 </details>
 
 <details>
-<summary><b>Assets do jogo</b></summary>
+<summary><b>Game assets</b></summary>
 
-Os dados ficam num pacote HBPak dentro da ROM ([formato](docs/PAK_FORMAT.md)):
+The game data lives in an HBPak archive inside the ROM ([format](docs/PAK_FORMAT.md)):
 
 ```powershell
-python tools\pak.py verify  "roms\<sua-rom>.gba"   # confere a ida e volta byte a byte
-python tools\pak.py extract "roms\<sua-rom>.gba"   # -> assets\extracted\ (fora do Git)
+python tools\pak.py verify  "roms\<your-rom>.gba"   # checks the byte-for-byte round trip
+python tools\pak.py extract "roms\<your-rom>.gba"   # -> assets\extracted\ (not tracked by Git)
 python tools\pak.py build   assets\extracted build\data.pak
 ```
 
 </details>
 
-Os commits seguem [Conventional Commits](https://www.conventionalcommits.org/), em português.
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (messages in Portuguese).
 
-## 💖 Apoie
+## 💖 Support
 
 <div align="center">
   <a href="https://github.com/sponsors/PedroVitor-Dev">
-    <img src="docs/images/sponsor.svg" alt="Gostou do recomp? Seja patrocinador" width="640">
+    <img src="docs/images/sponsor.svg" alt="Enjoying the recomp? Become a sponsor" width="640">
   </a>
 </div>
 
-## ⚖️ Licença
+## ⚖️ License
 
-Código sob **GPL-3.0** (veja [LICENSE](LICENSE)).
+Code licensed under **GPL-3.0** (see [LICENSE](LICENSE)).
 
-*Avatar: The Last Airbender* e seus personagens são marcas da Nickelodeon/Viacom; o jogo é da
-THQ. Este é um projeto de fãs, sem fins lucrativos e sem afiliação com os detentores dos
-direitos. Nenhum código ou dado do jogo original é distribuído aqui.
+*Avatar: The Last Airbender* and its characters are trademarks of Nickelodeon/Viacom; the game
+was published by THQ. This is a non-profit fan project with no affiliation to the rights holders.
+No code or data from the original game is distributed here.
