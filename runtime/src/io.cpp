@@ -105,11 +105,20 @@ void Io::write16(uint32_t off, uint16_t v) {
         return;
     }
     case REG_SOUNDCNT_H:
+        gba_.apu.catch_up(gba_.now());
         reg(off) = v;
         if (v & 0x0800) fifo[0].clear();
         if (v & 0x8000) fifo[1].clear();
         return;
     default: break;
+    }
+
+    // Registradores de som (PSG, controle, wave RAM)
+    if (off >= 0x060 && off < 0x0A0) {
+        gba_.apu.catch_up(gba_.now());
+        reg(off) = v;
+        gba_.apu.on_write(off, v, gba_.now());
+        return;
     }
 
     // Pontos de referência dos BGs afins
@@ -238,7 +247,14 @@ void Io::fifo_tick(int timer) {
         const int sel = (sc >> (ch ? 14 : 10)) & 1;
         if (sel != timer) continue;
         auto& f = fifo[ch];
-        if (!f.empty()) f.erase(f.begin());
+        if (sc & (ch ? 0x3000 : 0x0300)) { // só conta canais ligados em L/R
+            ++fifo_ticks[ch];
+            if (f.empty()) ++fifo_underruns[ch];
+        }
+        if (!f.empty()) {
+            gba_.apu.on_fifo_sample(ch, f.front(), gba_.now());
+            f.erase(f.begin());
+        }
         if (f.size() <= 16) {
             // Pede mais amostras ao canal de DMA (1 ou 2) configurado para este FIFO.
             for (int c = 1; c <= 2; ++c) {

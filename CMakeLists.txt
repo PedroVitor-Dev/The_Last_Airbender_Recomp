@@ -33,15 +33,16 @@ add_library(tla_gba STATIC
     runtime/src/io.cpp
     runtime/src/ppu.cpp
     runtime/src/bios.cpp
+    runtime/src/apu.cpp
     runtime/src/gba.cpp)
 target_include_directories(tla_gba PUBLIC runtime/include)
 target_link_libraries(tla_gba PUBLIC tla_core)
 
 # Frontend
-add_executable(tlagba frontend/src/main.cpp)
+add_executable(tlagba frontend/src/main.cpp frontend/src/audio_xaudio2.cpp)
 target_link_libraries(tlagba PRIVATE tla_gba)
 if(WIN32)
-    target_link_libraries(tlagba PRIVATE winmm)
+    target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32)
 endif()
 
 # Testes

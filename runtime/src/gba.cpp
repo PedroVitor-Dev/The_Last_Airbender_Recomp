@@ -2,7 +2,7 @@
 
 namespace gba {
 
-Gba::Gba(const core::Rom& rom) : bus(*this), cpu(*this), io(*this), ppu(*this), rom_(rom.bytes()) {
+Gba::Gba(const core::Rom& rom) : bus(*this), cpu(*this), io(*this), ppu(*this), apu(*this), rom_(rom.bytes()) {
     bus.rom = &rom_;
     bios_install_stub(bus);
     cpu.reset_after_bios();
@@ -58,6 +58,7 @@ void Gba::run_frame() {
         io.on_hblank(static_cast<int>(line));
         run_until(line_start + kCyclesPerLine);
     }
+    apu.catch_up(cycles_);
     ++frame_count;
 }
 

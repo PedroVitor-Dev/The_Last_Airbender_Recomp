@@ -8,7 +8,7 @@ hardware do GBA.
 
 ## Status
 
-Fase 2: o runtime com interpretador já roda o jogo (menu e gameplay), ainda sem áudio. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Fase 2: o runtime com interpretador já roda o jogo (menu e gameplay) com imagem e som. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -34,7 +34,8 @@ A análise grava relatórios em `generated/analysis/` (fora do Git).
 ```
 
 Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select, **A**/**S** = L/R,
-**Esc** = sair. O save (EEPROM) fica em `roms\<sua-rom>.sav`.
+**Esc** = sair. O save (EEPROM) fica em `roms\<sua-rom>.sav`. O som sai pelo XAudio2
+(`--mute` desliga); `--wav arquivo.wav` grava o áudio no modo headless.
 
 Modo de teste sem janela (capturas PNG e roteiro de botões):
 

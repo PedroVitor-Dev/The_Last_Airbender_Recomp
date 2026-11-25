@@ -20,7 +20,9 @@
 - [x] PPU (modos 0–5, sprites normais/afins, janelas, blending), DMA, timers, IRQ
 - [x] Frontend Win32 (janela + teclado) e modo headless com capturas PNG
 - [x] **Marco: jogo inicia, chega ao menu e ao gameplay pelo interpretador** (~5x tempo real)
-- [ ] Áudio: mixer dos FIFOs A/B + canais PSG, saída pelo Windows (WASAPI/XAudio2)
+- [x] Áudio: FIFOs A/B + 4 canais PSG a 48 kHz, saída XAudio2 com o áudio como relógio
+  (o jogo usa só o FIFO A, mono, a ~13,4 kHz via timer 0 + DMA1)
+- [ ] Conferir o som de ouvido contra o hardware real (volume relativo PSG × FIFO, filtro)
 - [ ] Mosaico, timing fino de DMA/waitstates, IntrWait/VBlankIntrWait (não usados pelo jogo)
 - [ ] Frontend multiplataforma (SDL3) e controle
 

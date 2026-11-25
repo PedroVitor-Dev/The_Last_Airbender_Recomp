@@ -9,6 +9,8 @@
 //   --press <TECLA>@<ini>[-<fim>]  segura a tecla nesses quadros (repetível)
 //                               TECLAS: A B SELECT START RIGHT LEFT UP DOWN R L
 //   --scale <n>                 escala da janela (padrão 3)
+//   --wav <arquivo.wav>         grava o áudio gerado (headless)
+//   --mute                      janela sem áudio (ritmo pelo relógio)
 //
 // Teclado (janela): setas, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R, Esc=sair.
 
@@ -23,6 +25,7 @@
 
 #include "core/rom.h"
 #include "gba/gba.h"
+#include "audio_out.h"
 #include "png.h"
 
 #ifdef _WIN32
@@ -84,12 +87,28 @@ void store_save(gba::Gba& g, const fs::path& path) {
     g.bus.eeprom.clear_dirty();
 }
 
+bool write_wav(const std::string& path, const std::vector<int16_t>& s, uint32_t rate) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    const uint32_t bytes = static_cast<uint32_t>(s.size() * 2);
+    f.write("RIFF", 4); u32(36 + bytes); f.write("WAVEfmt ", 8);
+    u32(16); u16(1); u16(2); u32(rate); u32(rate * 4); u16(4); u16(16);
+    f.write("data", 4); u32(bytes);
+    f.write(reinterpret_cast<const char*>(s.data()), bytes);
+    return true;
+}
+
 int run_headless(gba::Gba& g, uint64_t frames, const std::string& shot, uint64_t shot_every,
-                 const std::string& shot_prefix, const std::vector<Press>& script) {
+                 const std::string& shot_prefix, const std::vector<Press>& script, const std::string& wav) {
+    std::vector<int16_t> audio;
     const auto t0 = std::chrono::steady_clock::now();
     for (uint64_t f = 0; f < frames; ++f) {
         g.set_keys(scripted_keys(script, f));
         g.run_frame();
+        auto chunk = g.apu.take_samples();
+        if (!wav.empty()) audio.insert(audio.end(), chunk.begin(), chunk.end());
         if (shot_every && (f + 1) % shot_every == 0) {
             png::write_rgb(shot_prefix + "_" + std::to_string(f + 1) + ".png", g.frame().data(), gba::kScreenW,
                            gba::kScreenH);
@@ -100,6 +119,16 @@ int run_headless(gba::Gba& g, uint64_t frames, const std::string& shot, uint64_t
                 static_cast<unsigned long long>(frames), secs, frames / secs, frames / secs / 59.7275,
                 static_cast<unsigned long long>(g.cpu.instr_count), g.cpu.pc());
     if (!shot.empty()) png::write_rgb(shot, g.frame().data(), gba::kScreenW, gba::kScreenH);
+    for (int ch = 0; ch < 2; ++ch) {
+        if (!g.io.fifo_ticks[ch]) continue;
+        std::printf("FIFO %c: %llu amostras (%.0f Hz), %llu underruns\n", 'A' + ch,
+                    static_cast<unsigned long long>(g.io.fifo_ticks[ch]), g.io.fifo_ticks[ch] / (frames / 59.7275),
+                    static_cast<unsigned long long>(g.io.fifo_underruns[ch]));
+    }
+    if (!wav.empty()) {
+        write_wav(wav, audio, gba::Apu::kSampleRate);
+        std::printf("áudio: %zu amostras estéreo em %s\n", audio.size() / 2, wav.c_str());
+    }
     return 0;
 }
 
@@ -135,7 +164,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 }
 
-int run_window(gba::Gba& g, int scale, const fs::path& save_path) {
+int run_window(gba::Gba& g, int scale, const fs::path& save_path, bool mute, uint64_t max_frames) {
     HINSTANCE inst = GetModuleHandleW(nullptr);
     WNDCLASSW wc{};
     wc.lpfnWndProc = wnd_proc;
@@ -158,12 +187,15 @@ int run_window(gba::Gba& g, int scale, const fs::path& save_path) {
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
 
+    auto audio = mute ? nullptr : AudioOut::create(gba::Apu::kSampleRate);
+
     timeBeginPeriod(1);
     using clock = std::chrono::steady_clock;
     const auto frame_time = std::chrono::nanoseconds(16742706); // 59,7275 Hz
     auto next = clock::now();
     bool running = true;
-    while (running) {
+    const auto started = clock::now();
+    while (running && (!max_frames || g.frame_count < max_frames)) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) running = false;
@@ -176,6 +208,13 @@ int run_window(gba::Gba& g, int scale, const fs::path& save_path) {
         StretchDIBits(dc, 0, 0, gba::kScreenW * scale, gba::kScreenH * scale, 0, 0, gba::kScreenW, gba::kScreenH,
                       g.frame().data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
         if (g.frame_count % 60 == 0) store_save(g, save_path);
+        auto samples = g.apu.take_samples();
+        if (audio) {
+            // Áudio como relógio: ~3 quadros na fila (≈50 ms de latência).
+            audio->submit(samples);
+            while (audio->queued() > 3) Sleep(1);
+            continue;
+        }
         next += frame_time;
         const auto now = clock::now();
         if (next > now) {
@@ -185,6 +224,10 @@ int run_window(gba::Gba& g, int scale, const fs::path& save_path) {
         }
     }
     timeEndPeriod(1);
+    const double secs = std::chrono::duration<double>(clock::now() - started).count();
+    std::printf("%llu quadros em %.2f s (%.2f fps, alvo 59,73)%s\n", static_cast<unsigned long long>(g.frame_count),
+                secs, g.frame_count / secs, audio ? ", ritmo pelo áudio" : "");
+    DestroyWindow(hwnd);
     ReleaseDC(hwnd, dc);
     store_save(g, save_path);
     return 0;
@@ -202,16 +245,21 @@ int main(int argc, char** argv) {
     const fs::path rom_path = argv[1];
     bool headless = false;
     uint64_t frames = 600, shot_every = 0;
+    bool frames_given = false;
     std::string shot, shot_prefix = "frame";
     int scale = 3;
+    bool mute = false;
+    std::string wav;
     std::vector<Press> script;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--headless") headless = true;
-        else if (a == "--frames" && i + 1 < argc) frames = std::stoull(argv[++i]);
+        else if (a == "--frames" && i + 1 < argc) frames = std::stoull(argv[++i]), frames_given = true;
         else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == "--shot-every" && i + 2 < argc) shot_every = std::stoull(argv[++i]), shot_prefix = argv[++i];
         else if (a == "--scale" && i + 1 < argc) scale = std::stoi(argv[++i]);
+        else if (a == "--wav" && i + 1 < argc) wav = argv[++i];
+        else if (a == "--mute") mute = true;
         else if (a == "--press" && i + 1 < argc) {
             Press p{};
             if (!parse_press(argv[++i], p)) {
@@ -244,10 +292,10 @@ int main(int argc, char** argv) {
     try {
         int rc;
 #ifdef _WIN32
-        if (!headless) rc = run_window(*g, scale, save_path);
+        if (!headless) rc = run_window(*g, scale, save_path, mute, frames_given ? frames : 0);
         else
 #endif
-            rc = run_headless(*g, frames, shot, shot_every, shot_prefix, script);
+            rc = run_headless(*g, frames, shot, shot_every, shot_prefix, script, wav);
         if (headless) store_save(*g, save_path);
         return rc;
     } catch (const std::exception& e) {

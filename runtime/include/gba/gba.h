@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/rom.h"
+#include "gba/apu.h"
 
 namespace gba {
 
@@ -185,6 +186,8 @@ public:
     std::array<Timer, 4> timers;
     // Amostras do FIFO de som (consumidas pelo mixer de áudio do frontend, futuro)
     std::array<std::vector<int8_t>, 2> fifo;
+    // Diagnóstico: amostras consumidas e quantas vezes o FIFO estava vazio no tick.
+    std::array<uint64_t, 2> fifo_ticks{}, fifo_underruns{};
 
 private:
     void dma_write_control(int ch, uint16_t v);
@@ -240,6 +243,7 @@ public:
     Cpu cpu;
     Io io;
     Ppu ppu;
+    Apu apu;
     uint64_t frame_count = 0;
 
 private:
