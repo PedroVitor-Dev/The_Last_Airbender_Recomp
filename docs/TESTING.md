@@ -1,7 +1,8 @@
 # Testes e verificação
 
 O código recompilado precisa se comportar exatamente como o interpretador, que é a referência
-de semântica do ARM7TDMI. Quatro camadas de teste garantem isso, da mais barata à mais completa.
+de semântica do ARM7TDMI, e a PPU otimizada precisa produzir a mesma imagem que a versão por
+pixel original. Cinco camadas de teste garantem isso, da mais barata à mais completa.
 
 | Camada | Ferramenta | O que pega | Tempo |
 |--------|-----------|------------|-------|

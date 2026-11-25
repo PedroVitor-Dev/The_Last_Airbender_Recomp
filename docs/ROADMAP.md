@@ -40,8 +40,8 @@
   mais adiantadas
 - [x] Desempenho medido e PPU otimizada (SSE2 na composição): 16x → 42x tempo real; o código recompilado sozinho
   roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
-- [ ] Composição SIMD / sprites por linha / menos syncs de timer; otimizações do código
-  gerado (flags preguiçosas) só depois, por terem pouco retorno (~8% do tempo)
+- [ ] Efeitos de cor com SIMD, paleta pré-convertida nos BGs, menos syncs de timer;
+  otimizações do código gerado (flags preguiçosas) só depois, por terem pouco retorno (~10%)
 
 ## Fase 4 — Melhorias de PC
 - [ ] Resolução interna maior / widescreen (onde der)
