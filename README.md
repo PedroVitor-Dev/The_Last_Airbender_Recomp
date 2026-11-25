@@ -8,7 +8,7 @@ hardware do GBA.
 
 ## Status
 
-Fase 1: análise do código (decodificador ARMv4T e descoberta de funções). Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Fase 2: o runtime com interpretador já roda o jogo (menu e gameplay), ainda sem áudio. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -26,6 +26,21 @@ Fase 1: análise do código (decodificador ARMv4T e descoberta de funções). Ve
 ```
 
 A análise grava relatórios em `generated/analysis/` (fora do Git).
+
+## Jogar (interpretador)
+
+```powershell
+.\build\release\tlagba.exe "roms\<sua-rom>.gba"
+```
+
+Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select, **A**/**S** = L/R,
+**Esc** = sair. O save (EEPROM) fica em `roms\<sua-rom>.sav`.
+
+Modo de teste sem janela (capturas PNG e roteiro de botões):
+
+```powershell
+.\build\release\tlagba.exe "roms\<sua-rom>.gba" --headless --frames 2400 --shot-every 200 build\shots\run --press START@900-905
+```
 
 ## Assets
 
