@@ -166,7 +166,7 @@ void Analyzer::explore(Function& f) {
     f.lo = f.hi = f.addr;
 
     // Lê uma tabela de salto; retorna false (sem efeitos) se algum alvo for implausível.
-    auto resolve_table = [&](uint32_t base, uint32_t count, const State& st) {
+    auto resolve_table = [&](uint32_t at, uint32_t base, uint32_t count, const State& st) {
         if (count == 0 || count > kMaxTableEntries || !in_rom(base) || !in_rom(base + count * 4 - 1)) return false;
         std::vector<uint32_t> targets;
         for (uint32_t i = 0; i < count; ++i) {
@@ -176,6 +176,7 @@ void Analyzer::explore(Function& f) {
             targets.push_back(t);
         }
         mark(base, count * 4, ByteKind::Literal);
+        f.tables[at] = targets;
         State clean;
         clean.r = st.r;
         for (uint32_t t : targets) work.push_back({t, clean});
@@ -216,6 +217,7 @@ void Analyzer::explore(Function& f) {
                 break;
             }
             mark(pc, in.size, f.thumb ? ByteKind::Thumb : ByteKind::Arm);
+            f.instrs.insert(pc);
             if (pc < f.lo) f.lo = pc;
             if (pc + in.size > f.hi) f.hi = pc + in.size;
 
@@ -306,6 +308,7 @@ void Analyzer::explore(Function& f) {
                 const RegState& t = R[in.rm];
                 if (in.rm == 14 || t.tag == Tag::Popped) {
                     ends_block = always; // retorno (bx lr / pop {rN}; bx rN)
+                    f.returns.insert(pc);
                 } else if (in.rm < 15 && t.value) {
                     const uint32_t v = *t.value;
                     if (in_rom(v)) {
@@ -325,7 +328,10 @@ void Analyzer::explore(Function& f) {
             }
 
             case Op::LDM:
-                if (in.reg_list & 0x8000) ends_block = always; // retorno (pop {..., pc})
+                if (in.reg_list & 0x8000) {
+                    ends_block = always; // retorno (pop {..., pc})
+                    f.returns.insert(pc);
+                }
                 break;
 
             case Op::STR:
@@ -345,7 +351,7 @@ void Analyzer::explore(Function& f) {
                     } else if (!f.thumb && in.rn == 15 && in.pre_index && !in.op2.is_imm && in.op2.rm == st.cmp_reg &&
                                in.op2.shift == core::arm::ShiftType::LSL && in.op2.shift_amount == 2) {
                         // ARM: ldr pc, [pc, rX, lsl #2] — tabela logo após a instrução seguinte
-                        if (!resolve_table(in.pc_value, st.cmp_n + 1, st)) f.unresolved.push_back(pc);
+                        if (!resolve_table(pc, in.pc_value, st.cmp_n + 1, st)) f.unresolved.push_back(pc);
                     } else {
                         f.unresolved.push_back(pc);
                     }
@@ -361,10 +367,11 @@ void Analyzer::explore(Function& f) {
                 if (in.is_data_processing() && !in.is_compare() && in.rd == 15) {
                     const bool ret = in.op == Op::MOV && plain_reg(in.op2) &&
                                      (in.op2.rm == 14 || R[in.op2.rm].tag == Tag::Popped);
+                    if (ret) f.returns.insert(pc);
                     if (!ret) {
                         const RegState* src = in.op == Op::MOV && plain_reg(in.op2) ? &R[in.op2.rm] : nullptr;
                         if (src && src->tag == Tag::TableEntry) {
-                            if (!resolve_table(src->base, src->count, st)) f.unresolved.push_back(pc);
+                            if (!resolve_table(pc, src->base, src->count, st)) f.unresolved.push_back(pc);
                         } else if (out.value && in_rom(*out.value)) {
                             add_entry(*out.value, f.thumb, EntryReason::Jump);
                         } else {

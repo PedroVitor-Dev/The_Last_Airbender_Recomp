@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/rom.h"
@@ -108,7 +109,6 @@ public:
 
     void reset_after_bios();       // estado que a BIOS deixa antes de pular para 0x08000000
     uint32_t step();               // executa 1 instrução (ou atende IRQ); devolve ciclos
-    void request_irq_check() { irq_pending_check_ = true; }
 
     uint32_t cpsr() const;
     void set_cpsr(uint32_t v);
@@ -122,25 +122,27 @@ public:
     // Trace opcional: chamado antes de cada instrução (endereço, thumb).
     std::function<void(uint32_t, bool)> on_exec;
 
-private:
-    friend class Bios;
-    int bank_index(uint32_t mode) const;
+    // Estado exposto ao código recompilado (flags, modo, banco atual).
+    bool n_ = false, z_ = false, c_ = false, v_ = false;
+    bool i_ = false, f_ = false, t_ = false;
+    uint32_t mode_ = MODE_SYS;
+    uint32_t spsr_ = 0;
+    uint64_t irq_count = 0; // IRQs atendidas (para o HALT saber que acordou)
+
     void switch_mode(uint32_t new_mode);
     void enter_irq();
+
+private:
+    int bank_index(uint32_t mode) const;
     void branch_to(uint32_t addr, bool thumb);
 
     uint32_t user_reg(int n) const;
     void set_user_reg(int n, uint32_t v);
 
     Gba& gba_;
-    bool n_ = false, z_ = false, c_ = false, v_ = false;
-    bool i_ = false, f_ = false, t_ = false;
-    uint32_t mode_ = MODE_SYS;
-    uint32_t spsr_ = 0;
     // Bancos: índice 0 = usr/sys, 1 = fiq, 2 = irq, 3 = svc, 4 = abt, 5 = und
     std::array<uint32_t, 6> bank_r13_{}, bank_r14_{}, bank_spsr_{};
     std::array<uint32_t, 5> bank_fiq_r8_{}, bank_usr_r8_{};
-    bool irq_pending_check_ = true;
 };
 
 // ──────────────────────────────────────────────────────────────── IO ──
@@ -228,16 +230,42 @@ private:
     std::array<int32_t, 2> affine_x_{}, affine_y_{};
 };
 
+// ─────────────────────────────────────────────────── código recompilado ──
+using RecompFn = void (*)(Gba&);
+
+struct RecompEntry {
+    uint32_t addr;  // bit 0 = Thumb
+    RecompFn fn;
+};
+
+// Lançada de dentro de sync() quando o frontend pede para parar.
+struct StopRequested {};
+
 // ──────────────────────────────────────────────────────────────── Gba ──
 class Gba {
 public:
     explicit Gba(const core::Rom& rom);
 
-    void run_frame();
+    // Registra as funções recompiladas (nullptr/0 = só interpretador).
+    void set_recomp(const RecompEntry* table, size_t count);
+    bool has_recomp() const { return !recomp_.empty(); }
+
+    // Executa até on_frame devolver false. on_frame é chamado ao fim de cada quadro.
+    void run(const std::function<bool()>& on_frame);
+
     void set_keys(uint16_t pressed) { io.set_keys(pressed); }
     const std::array<uint32_t, kScreenW * kScreenH>& frame() const { return ppu.frame(); }
+    uint64_t now() const { return cycles; }
+    void request_sync() { next_event = cycles; }
 
-    uint64_t now() const { return cycles_; }
+    // ── API usada pelo código recompilado ──
+    void sync();                                 // processa eventos vencidos (vídeo, timers)
+    void sync_at(uint32_t pc);                   // idem + HALT + IRQ, retomando em `pc`
+    void call_function(uint32_t addr, bool thumb); // despacho por endereço (ou interpretador)
+    void jump_indirect(uint32_t target);         // salto indireto (bit 0 = Thumb)
+    void resume_until(uint32_t ret);             // continua em r15 até voltar para `ret`
+    void swi(uint32_t number, uint32_t next_pc);
+    [[noreturn]] void unimplemented(uint32_t pc, const char* what);
 
     Bus bus;
     Cpu cpu;
@@ -245,12 +273,32 @@ public:
     Ppu ppu;
     Apu apu;
     uint64_t frame_count = 0;
+    uint64_t cycles = 0;
+    uint64_t next_event = 0;
+
+    // Estatísticas do fallback: endereço → nº de entradas pelo interpretador.
+    std::unordered_map<uint32_t, uint64_t> fallback_entries;
+    uint64_t recomp_calls = 0;
 
 private:
-    void run_until(uint64_t target);
+    RecompFn find(uint32_t addr, bool thumb) const;
+    void run_hybrid_until(uint32_t ret);
+    void halt_wait();
+    void service_irq();
+    void advance_video();
+    void begin_line();
 
     std::vector<uint8_t> rom_;
-    uint64_t cycles_ = 0;
+    std::unordered_map<uint32_t, RecompFn> recomp_;
+    std::vector<uint8_t> recomp_bitmap_; // 1 bit por halfword da ROM: há função aqui?
+    std::function<bool()> on_frame_;
+
+    // Vídeo
+    uint32_t line_ = 0;
+    bool in_hblank_ = false;
+    bool frame_done_ = false;
+    uint64_t line_start_ = 0;
+    uint64_t video_event_ = kHDrawCycles;
 };
 
 // BIOS reimplementada (SWIs). Devolve false se a SWI não for suportada.

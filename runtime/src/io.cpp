@@ -22,6 +22,7 @@ Io::Io(Gba& gba) : gba_(gba) {
 
 void Io::raise(uint16_t irq) {
     reg(REG_IF) |= irq;
+    gba_.request_sync();
 }
 
 bool Io::irq_ready() const {
@@ -63,6 +64,7 @@ void Io::write8(uint32_t off, uint8_t v) {
     off &= 0x3FF;
     if (off == REG_HALTCNT + 1) {
         gba_.cpu.halted = true; // bit 7 = STOP; tratamos igual a HALT
+        gba_.request_sync();
         return;
     }
     if (off == REG_IF || off == REG_IF + 1) {
@@ -92,9 +94,17 @@ void Io::write16(uint32_t off, uint16_t v) {
     case REG_IF:
         reg(REG_IF) &= static_cast<uint16_t>(~v);
         return;
+    case REG_IE:
+    case REG_IME:
+        reg(off) = v;
+        gba_.request_sync(); // pode haver IRQ pendente liberada agora
+        return;
     case REG_HALTCNT:
         reg(off) = v;
-        if (v & 0xFF00) gba_.cpu.halted = true;
+        if (v & 0xFF00) {
+            gba_.cpu.halted = true;
+            gba_.request_sync();
+        }
         return;
     case REG_FIFO_A: case REG_FIFO_A + 2: case REG_FIFO_B: case REG_FIFO_B + 2: {
         auto& f = fifo[off >= REG_FIFO_B ? 1 : 0];

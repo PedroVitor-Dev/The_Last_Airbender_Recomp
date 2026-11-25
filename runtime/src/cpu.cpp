@@ -109,6 +109,7 @@ void Cpu::enter_irq() {
     t_ = false;
     r[15] = 0x18;
     halted = false;
+    ++irq_count;
 }
 
 // ──────────────────────────────────────────────────────────── execução ──

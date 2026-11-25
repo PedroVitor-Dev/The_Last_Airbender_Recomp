@@ -38,9 +38,25 @@ add_library(tla_gba STATIC
 target_include_directories(tla_gba PUBLIC runtime/include)
 target_link_libraries(tla_gba PUBLIC tla_core)
 
+# Código recompilado (gerado por "tlarecomp emit" em generated/recomp; fora do Git)
+file(GLOB TLA_RECOMP_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/generated/recomp/*.cpp)
+if(TLA_RECOMP_SOURCES)
+    add_library(tla_recomp STATIC ${TLA_RECOMP_SOURCES})
+    target_link_libraries(tla_recomp PUBLIC tla_gba)
+    if(MSVC)
+        # Código gerado: rótulos não usados e variáveis-sombra são esperados.
+        target_compile_options(tla_recomp PRIVATE /W0 /O2 /bigobj)
+    endif()
+    message(STATUS "Código recompilado: ${CMAKE_SOURCE_DIR}/generated/recomp")
+else()
+    add_library(tla_recomp STATIC frontend/src/recomp_stub.cpp)
+    target_link_libraries(tla_recomp PUBLIC tla_gba)
+    message(STATUS "Sem código recompilado: tlagba usará só o interpretador")
+endif()
+
 # Frontend
 add_executable(tlagba frontend/src/main.cpp frontend/src/audio_xaudio2.cpp)
-target_link_libraries(tlagba PRIVATE tla_gba)
+target_link_libraries(tlagba PRIVATE tla_gba tla_recomp)
 if(WIN32)
     target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32)
 endif()

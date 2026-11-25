@@ -34,6 +34,9 @@ struct Function {
     std::set<uint32_t> blocks;        // inícios de blocos básicos
     std::set<uint32_t> callees;
     std::vector<uint32_t> unresolved; // endereços de saltos indiretos não resolvidos
+    std::set<uint32_t> instrs;        // endereços de todas as instruções da função
+    std::set<uint32_t> returns;       // instruções classificadas como retorno
+    std::map<uint32_t, std::vector<uint32_t>> tables; // salto por tabela → alvos
     bool is_veneer = false;           // stub "bx rN" (_call_via_rN)
     bool invalid = false;             // achou instrução indefinida ou saiu da ROM
     std::string invalid_why;
