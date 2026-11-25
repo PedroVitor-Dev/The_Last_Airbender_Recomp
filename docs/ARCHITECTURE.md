@@ -74,6 +74,7 @@ Saídas em `generated/analysis/`: `functions.csv`, `unresolved.txt`, `external.t
   Muitas funções só são alcançáveis por ponteiro: sem a varredura de ponteiros a análise acha
   ~300 funções; com ela, ~3 640 (~556 KB de Thumb, 6,6% da ROM — o resto são assets).
 - Salvamento: `EEPROM_V124` (biblioteca padrão da Nintendo).
-- Contém um sistema de arquivos com nomes legíveis (`layers\fnp_buildings.idx`, `.set`, ...)
-  em torno de `0x0823F000` — útil para extrair e, no futuro, substituir assets.
+- Os assets ficam num pak **HBPak** da Halfbrick em `0x082323DC` (1 555 arquivos, ~5 MB).
+  O jogo localiza o pak varrendo a ROM em tempo de execução. Detalhes em
+  [PAK_FORMAT.md](PAK_FORMAT.md).
 - ~89,6% da ROM está em uso (`0x72AB2F` bytes até o último byte não vazio).

@@ -27,6 +27,16 @@ Fase 1: análise do código (decodificador ARMv4T e descoberta de funções). Ve
 
 A análise grava relatórios em `generated/analysis/` (fora do Git).
 
+## Assets
+
+Os dados do jogo ficam num pak HBPak dentro da ROM ([formato](docs/PAK_FORMAT.md)):
+
+```powershell
+python tools\pak.py verify  "roms\<sua-rom>.gba"   # confere a ida e volta byte a byte
+python tools\pak.py extract "roms\<sua-rom>.gba"   # -> assets\extracted\ (fora do Git)
+python tools\pak.py build   assets\extracted build\data.pak
+```
+
 ## Licença
 
 GPL-3.0 (veja [LICENSE](LICENSE)). *Avatar: The Last Airbender* é marca de seus respectivos donos;

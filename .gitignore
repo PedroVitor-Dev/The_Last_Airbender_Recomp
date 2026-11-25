@@ -5,8 +5,10 @@ roms/*
 *.GBA
 *.sav
 
-# Código gerado pelo recompilador (derivado da ROM)
+# Código gerado pelo recompilador e assets extraídos (derivados da ROM)
 generated/
+assets/extracted/
+*.pak
 
 # Build
 build/

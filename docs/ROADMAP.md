@@ -10,7 +10,8 @@
 - [x] Descoberta de funções (entry, `BL`, ponteiros, tabelas de switch, config manual)
 - [x] Mapa de código × dados; relatório de cobertura (3 640 funções, 1 salto indireto restante)
 - [ ] Detectar funções folha alcançáveis só por ponteiro (sem `push {lr}`)
-- [ ] Extrator do sistema de arquivos interno
+- [x] Extrator do sistema de arquivos interno (HBPak, ida e volta byte a byte — `tools/pak.py`)
+- [ ] Decodificar formatos: `.set`/`.sp` (gráficos), `.la`/`.ro`/`.idx` (fases), `.str` (texto)
 
 ## Fase 2 — Runtime + interpretador
 - [ ] Barramento de memória (BIOS/EWRAM/IWRAM/IO/PAL/VRAM/OAM/ROM/EEPROM)
