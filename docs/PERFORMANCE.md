@@ -17,21 +17,22 @@ segundo; "35x" quer dizer que um quadro custa 1/35 do tempo disponível.
 | Interpretador | ~310 | ~5x |
 | Recompilado, PPU original | ~976 | ~16x |
 | Recompilado, PPU 1ª rodada (por tile, camadas ordenadas, tabelas) | ~2 070 | ~35x |
-| **Recompilado, PPU 2ª rodada (SSE2, tiles transparentes, sprites)** | **~2 540** | **~42x** |
+| Recompilado, PPU 2ª rodada (composição SSE2, tiles transparentes, sprites) | ~2 540 | ~42x |
+| **Recompilado, PPU 3ª rodada (efeitos de cor em SSE2)** | **~3 070** | **~51x** |
 | Interpretador sem renderização | ~383 | ~6x |
 | **Recompilado sem renderização** | **~12 900** | **~216x** |
 
 Sem renderização, o código recompilado é **~34x mais rápido** que o interpretador. Jogando a
-60 quadros/s, o jogo inteiro usa cerca de 2–3% de um núcleo.
+60 quadros/s, o jogo inteiro usa cerca de 2% de um núcleo.
 
 ## Para onde vai o tempo (`--profile`)
 
 | Subsistema | Fatia |
 |------------|------:|
-| PPU (renderização) | ~75% (composição ~41%, BGs ~22%, sprites ~9%) |
-| Sincronização (eventos de vídeo/timer, ~658 por quadro) | ~11% |
-| Código recompilado e o resto | ~10% |
-| APU | ~4% |
+| PPU (renderização) | ~67% (composição ~30%, BGs ~28%, sprites ~10%) |
+| Sincronização (eventos de vídeo/timer, ~658 por quadro) | ~14% |
+| Código recompilado e o resto | ~14% |
+| APU | ~5% |
 
 ## O que foi feito
 
@@ -50,12 +51,21 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 - **Sprites não-afins:** a faixa visível é recortada uma vez e a base da linha de tiles é
   calculada uma vez por sprite.
 
+**3ª rodada:**
+- **Efeitos de cor em SSE2.** Alpha e brilho são calculados por canal para 8 pixels de uma vez
+  (`mullo`/`srli`/`min`). A escolha entre topo, alpha e brilho é feita por máscaras que
+  reproduzem a cadeia de decisão da versão escalar (sprite semitransparente, janela, 1º e 2º
+  alvos, modo), sem desvios. A versão escalar fica como fallback fora do x86-64.
+  Resultado: ~2 540 → ~3 070 fps. Uma mutação (EVA trocado por EVB) é detectada pelo
+  `test_ppu` em 4 558 de 20 000 casos.
+
 **Tentativas medidas e descartadas:**
 - separar o laço da composição em versões com e sem janela (template): ~5% mais lento;
 - "pintor" escalar, sem SIMD: ~20% mais lento que a busca por pixel, porque são vários passes
   e 4 arrays gravados por camada;
-- decidir com SSE2 quais blocos de 8 pixels recebem efeito de cor: ~8% mais lento, porque
-  neste jogo o efeito fica ligado em 100% das linhas e a maioria dos pixels o recebe.
+- decidir com SSE2 quais blocos de 8 pixels recebem efeito de cor, mantendo o cálculo
+  escalar: ~8% mais lento, porque neste jogo a maioria dos pixels recebe o efeito. A solução
+  foi vetorizar o cálculo em si (3ª rodada).
 
 **Validação:**
 - 70 quadros de referência do jogo, idênticos por hash;
@@ -65,9 +75,9 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 ## Próximos passos possíveis (por retorno esperado)
 
-1. **Passe final de efeitos com SIMD de verdade**, calculando alpha e brilho em paralelo e não
-   só a decisão. A composição ainda é ~41%, e quase todo pixel recebe efeito.
-2. **BGs de texto:** paleta pré-convertida por linha, ou cache de linhas de tile decodificadas.
+1. **BGs de texto** (~28%, agora a maior fatia da PPU): paleta pré-convertida por linha, ou
+   cache de linhas de tile decodificadas.
+2. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
 3. **Menos syncs:** os overflows do timer de som geram um sync cada (~220 por quadro). As
    amostras do FIFO podem ser calculadas por aritmética na próxima sincronização de vídeo.
 4. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do

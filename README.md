@@ -8,7 +8,7 @@ hardware do GBA.
 
 ## Status
 
-Fase 3: o jogo roda **recompilado**, com imagem e som, a ~42x a velocidade do GBA quando sem
+Fase 3: o jogo roda **recompilado**, com imagem e som, a ~51x a velocidade do GBA quando sem
 limite (o código recompilado sozinho roda a ~216x). Só 2 instruções passam pelo interpretador
 em 7000 quadros, e os testes diferenciais dão 0 divergências. Veja
 [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),

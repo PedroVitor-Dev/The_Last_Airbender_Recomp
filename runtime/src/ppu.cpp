@@ -466,13 +466,77 @@ void Ppu::compose(int line) {
         return;
     }
 
-    // Brilho (modos 2/3) por canal, calculado uma vez por linha.
+#if defined(_M_X64) || defined(__SSE2__)
+    // Efeitos de cor em SSE2, 8 pixels por vez, sem desvios: calcula alpha e brilho para
+    // todos e escolhe por máscara, reproduzindo a cadeia de decisão da versão escalar:
+    //   A = topo é sprite semitransparente e a segunda camada é 2º alvo  → alpha
+    //   senão, se a janela libera efeitos:
+    //     modo 1 e topo 1º alvo e segunda 2º alvo                        → alpha
+    //     modos 2/3 e topo 1º alvo                                       → brilho
+    {
+        alignas(16) uint16_t semi16[kScreenW];
+        alignas(16) uint16_t color16[kScreenW];
+        for (int x = 0; x < kScreenW; ++x) semi16[x] = obj_semi_[x] ? 0xFFFF : 0;
+        const __m128i zero = _mm_setzero_si128();
+        const __m128i ones = _mm_cmpeq_epi16(zero, zero);
+        const __m128i c31 = _mm_set1_epi16(31), c7fff = _mm_set1_epi16(0x7FFF);
+        const __m128i v4 = _mm_set1_epi16(4), v20 = _mm_set1_epi16(0x20);
+        const __m128i veva = _mm_set1_epi16(static_cast<short>(eva)), vevb = _mm_set1_epi16(static_cast<short>(evb));
+        const __m128i vevy = _mm_set1_epi16(static_cast<short>(evy));
+        const __m128i is_mode1 = blend_mode == 1 ? ones : zero;
+        const __m128i is_mode23 = blend_mode >= 2 ? ones : zero;
+        const unsigned first_set = bldcnt & 0x3F, second_set = (bldcnt >> 8) & 0x3F;
+        auto in_set = [&](__m128i ids, unsigned set) {
+            __m128i r = zero;
+            for (int id = 0; id < 6; ++id)
+                if ((set >> id) & 1) r = _mm_or_si128(r, _mm_cmpeq_epi16(ids, _mm_set1_epi16(static_cast<short>(id))));
+            return r;
+        };
+        auto select = [](__m128i m, __m128i a, __m128i b) { return _mm_or_si128(_mm_and_si128(m, a), _mm_andnot_si128(m, b)); };
+
+        for (int x = 0; x < kScreenW; x += 8) {
+            const __m128i t = _mm_and_si128(_mm_load_si128(reinterpret_cast<const __m128i*>(top + x)), c7fff);
+            const __m128i b = _mm_and_si128(_mm_load_si128(reinterpret_cast<const __m128i*>(bot + x)), c7fff);
+            const __m128i ti = _mm_load_si128(reinterpret_cast<const __m128i*>(tid + x));
+            const __m128i bi = _mm_load_si128(reinterpret_cast<const __m128i*>(bid + x));
+
+            // Máscaras de decisão
+            const __m128i first = in_set(ti, first_set);
+            const __m128i second = in_set(bi, second_set);
+            const __m128i semi = _mm_load_si128(reinterpret_cast<const __m128i*>(semi16 + x));
+            const __m128i a_semi = _mm_and_si128(_mm_and_si128(_mm_cmpeq_epi16(ti, v4), semi), second);
+            const __m128i fxwin =
+                any_win ? _mm_cmpeq_epi16(_mm_and_si128(_mm_load_si128(reinterpret_cast<const __m128i*>(mask16 + x)), v20), v20)
+                        : ones;
+            const __m128i use_alpha =
+                _mm_or_si128(a_semi, _mm_and_si128(_mm_and_si128(fxwin, is_mode1), _mm_and_si128(first, second)));
+            const __m128i use_bright = _mm_andnot_si128(a_semi, _mm_and_si128(_mm_and_si128(fxwin, is_mode23), first));
+
+            // Alpha e brilho por canal (valores ≤ 31·16·2, cabem em 16 bits)
+            __m128i alpha_c = zero, bright_c = zero;
+            for (int s = 0; s < 15; s += 5) {
+                const __m128i ct = _mm_and_si128(_mm_srli_epi16(t, s), c31);
+                const __m128i cb = _mm_and_si128(_mm_srli_epi16(b, s), c31);
+                const __m128i al = _mm_min_epi16(
+                    c31, _mm_srli_epi16(_mm_add_epi16(_mm_mullo_epi16(ct, veva), _mm_mullo_epi16(cb, vevb)), 4));
+                const __m128i br = blend_mode == 2
+                                       ? _mm_add_epi16(ct, _mm_srli_epi16(_mm_mullo_epi16(_mm_sub_epi16(c31, ct), vevy), 4))
+                                       : _mm_sub_epi16(ct, _mm_srli_epi16(_mm_mullo_epi16(ct, vevy), 4));
+                alpha_c = _mm_or_si128(alpha_c, _mm_slli_epi16(al, s));
+                bright_c = _mm_or_si128(bright_c, _mm_slli_epi16(br, s));
+            }
+            const __m128i color = select(use_alpha, alpha_c, select(use_bright, bright_c, t));
+            _mm_store_si128(reinterpret_cast<__m128i*>(color16 + x), color);
+        }
+        for (int x = 0; x < kScreenW; ++x) out[x] = kArgb.v[color16[x]];
+        return;
+    }
+#endif
+
+    // Versão escalar (fallback fora do x86-64; também é a referência de lógica acima).
     uint8_t bright[32];
     for (int c = 0; c < 32; ++c)
         bright[c] = static_cast<uint8_t>(blend_mode == 2 ? c + (((31 - c) * evy) >> 4) : c - ((c * evy) >> 4));
-
-    // Passe final escalar. (Decidir com SSE2 quais blocos de 8 px têm efeito foi testado e
-    // ficou mais lento: neste jogo a maioria dos pixels recebe efeito de cor.)
     for (int x = 0; x < kScreenW; ++x) {
         const uint8_t m = any_win ? mask[x] : 0x3F;
         const uint16_t t = top[x] & 0x7FFF;
