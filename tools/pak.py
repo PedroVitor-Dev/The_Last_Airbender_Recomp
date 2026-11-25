@@ -230,5 +230,7 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except BrokenPipeError:  # saída cortada por "| head"
-        sys.exit(0)
+    except OSError as exc:  # saída cortada por "| head" (EPIPE; EINVAL no Windows)
+        if isinstance(exc, BrokenPipeError) or exc.errno == 22:
+            sys.exit(0)
+        raise
