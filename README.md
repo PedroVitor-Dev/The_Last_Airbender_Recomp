@@ -38,8 +38,24 @@ outra pasta: `.\scripts\build.ps1 -BuildDir build\dev`.
 .\build\release\tlagba.exe "roms\<sua-rom>.gba"
 ```
 
-Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select, **A**/**S** = L/R,
-**Esc** = sair. O save (EEPROM) fica em `roms\<sua-rom>.sav`. O som sai pelo XAudio2.
+Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select, **A**/**S** = L/R.
+Controle (XInput: Xbox, 8BitDo em modo X etc.): direcional ou analógico, A/B, LB/RB, Start, Back.
+O save (EEPROM) fica em `roms\<sua-rom>.sav`. O som sai pelo XAudio2.
+
+**Tela de configurações** — **Esc**, **F1**, o botão **Xbox/home** do controle ou **Back+Start**
+abrem; o jogo fica congelado enquanto ela está aberta. Nela: continuar, salvar/carregar estado
+(10 slots), tela cheia, tamanho da janela, volume, analógico, remapear teclado e controle
+(escolha o botão e aperte a nova tecla), restaurar padrões e sair. Tudo é gravado em
+`tlagba.ini`, ao lado do executável, que também pode ser editado à mão.
+
+| Atalho | Ação |
+|--------|------|
+| F5 / F9 | salvar / carregar estado (`roms\states\`) |
+| F6 / F7 | slot anterior / próximo |
+| Tab (segurar) | turbo |
+| P | pausa |
+| F11 ou Alt+Enter | tela cheia |
+| F12 | captura PNG (`roms\screenshots\`) |
 
 | Opção | Efeito |
 |-------|--------|
@@ -49,6 +65,9 @@ Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select,
 | `--shot f.png` / `--shot-every K prefixo` | capturas PNG |
 | `--press TECLA@ini-fim` | roteiro de botões |
 | `--wav f.wav` | grava o áudio |
+| `--scale N` | tamanho da janela (sobrepõe o ini) |
+| `--load-state f` | começa a partir de um save state |
+| `--save-state-at N f` / `--load-state-at N f` | grava / carrega um estado no quadro N (headless, testes) |
 | `--fallback-log f.txt` | endereços executados pelo interpretador |
 | `--profile` / `--no-render` | tempo por subsistema / pula a renderização (diagnóstico) |
 

@@ -47,5 +47,7 @@
 
 ## Fase 4 — Melhorias de PC
 - [ ] Resolução interna maior / widescreen (onde der)
-- [ ] 60 fps estável, save states, remapeamento de controles
+- [x] 60 fps estável (áudio como relógio), save states com slots, remapeamento de controles
+- [x] Tela de configurações no visual do jogo (jogo congelado; Esc/F1/botão Xbox/home)
+- [x] Gamepad XInput com analógico, gatilhos e botão home; tela cheia, turbo, pausa, capturas
 - [ ] Mods e substituição de assets
