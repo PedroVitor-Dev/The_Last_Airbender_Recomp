@@ -198,8 +198,10 @@ private:
     void dma_write_control(int ch, uint16_t v);
     void run_dma(int ch);
     void trigger_dma(int timing);
-    void fifo_tick(int timer);
-    void timer_overflow(int t, uint32_t times);
+    void fifo_tick(int timer, uint64_t at);
+    // `first_at`/`interval`: instante do 1º estouro e distância entre estouros (ciclos);
+    // interval = 0 quando o instante exato não é conhecido (cascata).
+    void timer_overflow(int t, uint32_t times, uint64_t first_at, uint64_t interval);
 
     Gba& gba_;
     std::array<uint16_t, 0x200> regs_{};

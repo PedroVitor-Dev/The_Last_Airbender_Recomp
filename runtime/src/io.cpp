@@ -176,6 +176,7 @@ void Io::write16(uint32_t off, uint16_t v) {
             t.last_update = gba_.now();
         }
         reg(off) = v;
+        gba_.request_sync(); // o próximo estouro mudou: reagendar
         return;
     }
 
@@ -259,7 +260,7 @@ void Io::on_vblank() {
 
 // ──────────────────────────────────────────────────────────── timers ──
 
-void Io::fifo_tick(int timer) {
+void Io::fifo_tick(int timer, uint64_t at) {
     const uint16_t sc = reg(REG_SOUNDCNT_H);
     for (int ch = 0; ch < 2; ++ch) {
         const int sel = (sc >> (ch ? 14 : 10)) & 1;
@@ -270,7 +271,7 @@ void Io::fifo_tick(int timer) {
             if (f.empty()) ++fifo_underruns[ch];
         }
         if (!f.empty()) {
-            gba_.apu.on_fifo_sample(ch, f.front(), gba_.now());
+            gba_.apu.on_fifo_sample(ch, f.front(), at);
             f.erase(f.begin());
         }
         if (f.size() <= 16) {
@@ -287,11 +288,13 @@ void Io::fifo_tick(int timer) {
     }
 }
 
-void Io::timer_overflow(int t, uint32_t times) {
+void Io::timer_overflow(int t, uint32_t times, uint64_t first_at, uint64_t interval) {
     if (timers[t].control & 0x40) raise(static_cast<uint16_t>(IRQ_TIMER0 << t));
     if (t < 2) {
-        const uint32_t n = times > 64 ? 64 : times; // limite defensivo
-        for (uint32_t i = 0; i < n; ++i) fifo_tick(t);
+        // Cada amostra entra no instante exato do seu estouro (o ciclo atual pode estar
+        // adiantado: o código recompilado cobra os ciclos do bloco inteiro na entrada).
+        const uint32_t n = times > 4096 ? 4096 : times; // limite defensivo
+        for (uint32_t i = 0; i < n; ++i) fifo_tick(t, first_at + i * interval);
     }
     if (t < 3) {
         Timer& nx = timers[t + 1];
@@ -302,7 +305,7 @@ void Io::timer_overflow(int t, uint32_t times) {
                 const uint32_t over = total - 0x10000;
                 const uint32_t n = 1 + over / period;
                 nx.counter = static_cast<uint16_t>(nx.reload + over % period);
-                timer_overflow(t + 1, n);
+                timer_overflow(t + 1, n, gba_.now(), 0);
             } else {
                 nx.counter = static_cast<uint16_t>(total);
             }
@@ -317,6 +320,9 @@ void Io::update_timers(uint64_t now) {
         t.last_update = now;
         if (!(t.control & 0x80) || (i > 0 && (t.control & 0x04))) continue;
         const int shift = kPrescalerShift[t.control & 3];
+        const uint64_t start = now - elapsed;
+        const uint32_t sub0 = t.sub;
+        const uint16_t counter0 = t.counter;
         const uint64_t acc = t.sub + elapsed;
         const uint64_t ticks = acc >> shift;
         t.sub = static_cast<uint32_t>(acc & ((1u << shift) - 1));
@@ -327,7 +333,8 @@ void Io::update_timers(uint64_t now) {
             const uint64_t over = total - 0x10000;
             const uint64_t n = 1 + over / period;
             t.counter = static_cast<uint16_t>(t.reload + over % period);
-            timer_overflow(i, static_cast<uint32_t>(n));
+            const uint64_t first_at = start + ((uint64_t(0x10000u - counter0) << shift) - sub0);
+            timer_overflow(i, static_cast<uint32_t>(n), first_at, period << shift);
         } else {
             t.counter = static_cast<uint16_t>(total);
         }

@@ -80,8 +80,28 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
   continua idêntico. Resultado em A/B intercalado (5 rodadas): mediana +4%. Uma mutação que
   faz a cache ignorar mudanças é detectada pelo `test_ppu` (4 805 de 5 000 casos).
 
+**Timers e IRQs** (correções encontradas ao tentar reduzir syncs):
+- Escrever no controle ou na recarga de um timer agora reagenda o próximo evento. Antes, o
+  novo estouro só entrava na agenda no próximo evento qualquer.
+- Limpar o bit I do CPSR (`msr`, retorno de handler) agora pede sincronização: uma IRQ
+  pendente é atendida no bloco seguinte, como no hardware. Antes, ela esperava o próximo
+  evento de vídeo ou timer (no caso encontrado, ~52 mil ciclos depois de o timer 2 estourar,
+  com o atendimento variando conforme outros eventos).
+- Cada amostra do FIFO entra no instante exato do estouro do timer, calculado por aritmética,
+  e não no ciclo da sincronização (que pode estar um bloco à frente).
+
+  Isso muda o momento de algumas IRQs, então o estado do jogo diverge do anterior (aparece na
+  posição dos flocos de neve, que vêm do gerador aleatório) e as referências foram regeradas.
+  Todos os testes de CPU e de PPU passam. No A/B ficou ~2,7% mais rápido.
+
 **Tentativas medidas e descartadas:**
 - separar o laço da composição em versões com e sem janela (template): ~5% mais lento;
+- **timers "preguiçosos"**: estouros que só alimentam o FIFO deixam de ser eventos (658 → 456
+  syncs por quadro), com saída idêntica (70 quadros, WAV byte a byte e 4 118 IRQs iguais à
+  estratégia precisa, comparadas no mesmo binário). Mas no A/B sem `--profile` o ganho foi
+  zero: uma sync custa pouco, e o ganho que o perfil mostrava vinha do custo do próprio perfil
+  (ele cronometra cada sync). Foi removido para não manter complexidade sem retorno. As
+  correções de IRQ acima saíram dessa investigação;
 - paleta de OBJ pré-convertida + sprites decodificados por tile: correta (passou no
   `test_ppu` depois de corrigir a volta de endereço em 8 bpp perto do tile 1023), mas neutra
   a ~1,5% mais lenta no A/B. O custo dos sprites estava na varredura da OAM por linha, não
@@ -101,9 +121,7 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 ## Próximos passos possíveis (por retorno esperado)
 
 1. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
-2. **Menos syncs:** os overflows do timer de som geram um sync cada (~220 por quadro). As
-   amostras do FIFO podem ser calculadas por aritmética na próxima sincronização de vídeo.
-3. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
+2. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
    tempo, então o ganho total máximo é pequeno.
 
 ## Como validar uma otimização
@@ -114,6 +132,8 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 # depois: capturar em build\check e comparar os hashes dos PNGs (precisam ser iguais)
 ```
 
-A execução é determinística: duas rodadas iguais produzem os mesmos 70 quadros. Mudanças na
+A execução é determinística: duas rodadas iguais produzem os mesmos 70 quadros.
+**Meça ganhos com A/B intercalado e sem `--profile`**: o perfil cronometra cada sync e cada
+linha, e isso distorce justamente as partes que se tenta otimizar. Mudanças na
 composição ou nos sprites também precisam passar no `test_ppu`. Para mudanças
 no código gerado ou no runtime da CPU, rode também os testes de [TESTING.md](TESTING.md).

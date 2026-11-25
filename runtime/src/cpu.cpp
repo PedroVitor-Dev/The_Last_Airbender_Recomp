@@ -60,7 +60,11 @@ void Cpu::set_cpsr(uint32_t v) {
     z_ = v >> 30 & 1;
     c_ = v >> 29 & 1;
     v_ = v >> 28 & 1;
+    const bool was_masked = i_;
     i_ = v >> 7 & 1;
+    // IRQs liberadas (msr, retorno de handler): uma IRQ pendente deve ser atendida já no
+    // próximo ponto de sincronização, não no próximo evento de vídeo/timer.
+    if (was_masked && !i_) gba_.request_sync();
     f_ = v >> 6 & 1;
     t_ = v >> 5 & 1;
     switch_mode((v & 0x1F) | 0x10);
