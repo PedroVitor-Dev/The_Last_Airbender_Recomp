@@ -6,6 +6,7 @@ de semântica do ARM7TDMI. Quatro camadas de teste garantem isso, da mais barata
 | Camada | Ferramenta | O que pega | Tempo |
 |--------|-----------|------------|-------|
 | Decodificador | `test_decoder` | codificação/desmontagem de instruções conhecidas | instantâneo |
+| PPU | `test_ppu` | composição e sprites otimizados × implementação original por pixel (25 mil casos) | ~1 s |
 | Instruções | `scripts\test_synth.ps1` | erros do emissor e dos helpers em cada forma de instrução, nos casos-limite | ~1–2 min (inclui build) |
 | Funções do jogo | `tlaverify` | erros de análise e de tradução no código real (fluxo, chamadas, tabelas, overlays) | ~1 min |
 | Os próprios testes | `scripts\mutation_test.ps1` | se as camadas acima ainda detectam bugs conhecidos | ~4 min |

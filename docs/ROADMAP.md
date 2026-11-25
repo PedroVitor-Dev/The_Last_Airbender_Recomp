@@ -38,7 +38,7 @@
   e teste de mutação — ver [TESTING.md](TESTING.md)
 - [ ] Replay com IRQs habilitadas (exige timing idêntico entre os modos) e roteiros de fases
   mais adiantadas
-- [x] Desempenho medido e PPU otimizada: 16x → 35x tempo real; o código recompilado sozinho
+- [x] Desempenho medido e PPU otimizada (SSE2 na composição): 16x → 42x tempo real; o código recompilado sozinho
   roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] Composição SIMD / sprites por linha / menos syncs de timer; otimizações do código
   gerado (flags preguiçosas) só depois, por terem pouco retorno (~8% do tempo)
