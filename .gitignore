@@ -1,0 +1,22 @@
+# ROMs e assets proprietários — NUNCA versionar
+roms/*
+!roms/README.md
+*.gba
+*.GBA
+*.sav
+
+# Código gerado pelo recompilador (derivado da ROM)
+generated/
+
+# Build
+build/
+out/
+.vs/
+*.user
+
+# Python
+__pycache__/
+*.pyc
+
+# Ferramentas locais
+.claude/settings.local.json
