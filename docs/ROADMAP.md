@@ -9,7 +9,7 @@
 - [x] Decodificador ARMv4T (ARM + Thumb) com disassembler textual e testes
 - [x] Descoberta de funções (entry, `BL`, ponteiros, tabelas de switch, config manual)
 - [x] Mapa de código × dados; relatório de cobertura (3 640 funções, 1 salto indireto restante)
-- [ ] Detectar funções folha alcançáveis só por ponteiro (sem `push {lr}`)
+- [x] Detectar funções folha alcançáveis só por ponteiro (sem `push {lr}`)
 - [x] Extrator do sistema de arquivos interno (HBPak, ida e volta byte a byte — `tools/pak.py`)
 - [ ] Decodificar formatos: `.set`/`.sp` (gráficos), `.la`/`.ro`/`.idx` (fases), `.str` (texto)
 
@@ -27,10 +27,15 @@
 - [ ] Frontend multiplataforma (SDL3) e controle
 
 ## Fase 3 — Recompilação
-- [ ] Emissor de C por função, despacho por tabela
-- [ ] Testes diferenciais recompilado × interpretador
-- [ ] Fallback e registro de saltos indiretos desconhecidos
-- [ ] **Marco: jogo completo rodando 100% recompilado**
+- [x] Emissor de C++ por função, despacho por tabela, ciclos por bloco
+- [x] Agendador por eventos e execução híbrida (recompilado ⇄ interpretador)
+- [x] Overlays na IWRAM (mixer de som, cópia do handler de IRQ) e código encadeado
+- [x] `bl` como salto longo, funções folha por ponteiro, desempilhamento propagado
+- [x] Fallback com estatísticas (`--fallback-log`) e teste diferencial (`tlaverify`)
+- [x] **Marco: jogo rodando recompilado** — 2 instruções interpretadas em 7000 quadros,
+  ~16x tempo real, 0 divergências em 1472 execuções (621 funções)
+- [ ] Ampliar a cobertura do `tlaverify` (mais fases e menus; IRQs habilitadas no teste)
+- [ ] Desempenho: flags preguiçosas, registradores em variáveis locais, menos `sync_at`
 
 ## Fase 4 — Melhorias de PC
 - [ ] Resolução interna maior / widescreen (onde der)
