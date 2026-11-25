@@ -23,7 +23,8 @@ target_include_directories(tla_core PUBLIC core/include)
 # Recompilador offline
 add_executable(tlarecomp
     recompiler/src/main.cpp
-    recompiler/src/analysis.cpp)
+    recompiler/src/analysis.cpp
+    recompiler/src/emitter.cpp)
 target_link_libraries(tlarecomp PRIVATE tla_core)
 
 # Runtime do GBA (hardware + interpretador)

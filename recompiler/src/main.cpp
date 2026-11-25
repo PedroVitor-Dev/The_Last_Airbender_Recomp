@@ -13,6 +13,7 @@
 #include <string>
 
 #include "analysis.h"
+#include "emitter.h"
 #include "core/rom.h"
 
 namespace fs = std::filesystem;
@@ -23,7 +24,7 @@ int usage() {
     std::fprintf(stderr,
                  "uso:\n"
                  "  tlarecomp info    <rom.gba>\n"
-                 "  tlarecomp analyze <rom.gba> [-o <dir>] [--config <arquivo>] [--disasm] [--no-scan]\n");
+                 "  tlarecomp analyze <rom.gba> [-o <dir>] [--config <arquivo>] [--disasm] [--no-scan] [--emit <dir>]\n");
     return 2;
 }
 
@@ -97,15 +98,17 @@ void write_disasm(const recomp::Analyzer& a, const fs::path& file) {
     }
 }
 
-int cmd_analyze(int argc, char** argv) {
+int cmd_analyze(int argc, char** argv, bool emit) {
     const char* rom_path = nullptr;
     fs::path out_dir = "generated/analysis";
+    fs::path emit_dir = emit ? "generated/recomp" : "";
     std::string config = "config/functions.txt";
     bool disasm = false, scan = true;
     for (int i = 0; i < argc; ++i) {
         if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--config") && i + 1 < argc) config = argv[++i];
         else if (!std::strcmp(argv[i], "--disasm")) disasm = true;
+        else if (!std::strcmp(argv[i], "--emit") && i + 1 < argc) emit_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--no-scan")) scan = false;
         else if (!rom_path) rom_path = argv[i];
         else return usage();
@@ -184,6 +187,12 @@ int cmd_analyze(int argc, char** argv) {
     std::printf("Alvos externos: %zu (fora da ROM, ex.: IWRAM)\n", a.external_targets().size());
     std::printf("Conflitos     : %u bytes com modo divergente\n", a.mode_conflicts());
     std::printf("Relatórios em : %s\n", out_dir.string().c_str());
+
+    if (!emit_dir.empty()) {
+        const auto st = recomp::emit_cpp(a, *rom, emit_dir);
+        std::printf("C++ gerado    : %zu funções, %zu instruções, %zu arquivos em %s (%zu não suportadas)\n",
+                    st.functions, st.instructions, st.files, emit_dir.string().c_str(), st.unimplemented);
+    }
     return 0;
 }
 
@@ -192,6 +201,7 @@ int cmd_analyze(int argc, char** argv) {
 int main(int argc, char** argv) {
     if (argc < 3) return usage();
     if (!std::strcmp(argv[1], "info")) return cmd_info(argv[2]);
-    if (!std::strcmp(argv[1], "analyze")) return cmd_analyze(argc - 2, argv + 2);
+    if (!std::strcmp(argv[1], "analyze")) return cmd_analyze(argc - 2, argv + 2, false);
+    if (!std::strcmp(argv[1], "emit")) return cmd_analyze(argc - 2, argv + 2, true);
     return usage();
 }
