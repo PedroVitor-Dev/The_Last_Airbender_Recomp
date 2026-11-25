@@ -238,6 +238,12 @@ struct RecompEntry {
     RecompFn fn;
 };
 
+// Código da ROM copiado para a RAM e recompilado no endereço da RAM. Só é usado
+// enquanto a RAM ainda contém exatamente aquela cópia.
+struct RecompOverlay {
+    uint32_t ram, rom, size;
+};
+
 // Lançada de dentro de sync() quando o frontend pede para parar.
 struct StopRequested {};
 
@@ -247,7 +253,8 @@ public:
     explicit Gba(const core::Rom& rom);
 
     // Registra as funções recompiladas (nullptr/0 = só interpretador).
-    void set_recomp(const RecompEntry* table, size_t count);
+    void set_recomp(const RecompEntry* table, size_t count, const RecompOverlay* overlays = nullptr,
+                    size_t overlay_count = 0);
     bool has_recomp() const { return !recomp_.empty(); }
 
     // Executa até on_frame devolver false. on_frame é chamado ao fim de cada quadro.
@@ -278,6 +285,8 @@ public:
 
     // Estatísticas do fallback: endereço → nº de entradas pelo interpretador.
     std::unordered_map<uint32_t, uint64_t> fallback_entries;
+    std::unordered_map<uint32_t, uint64_t> fallback_instrs; // instruções interpretadas por entrada
+    std::unordered_map<uint32_t, uint64_t> interp_regions;  // início de trecho interpretado → instruções
     uint64_t recomp_calls = 0;
 
 private:
@@ -291,6 +300,8 @@ private:
     std::vector<uint8_t> rom_;
     std::unordered_map<uint32_t, RecompFn> recomp_;
     std::vector<uint8_t> recomp_bitmap_; // 1 bit por halfword da ROM: há função aqui?
+    std::vector<RecompOverlay> overlays_;
+    RecompFn find_overlay(uint32_t addr, bool thumb) const;
     std::function<bool()> on_frame_;
 
     // Vídeo

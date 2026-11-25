@@ -13,6 +13,7 @@
 //   --wav <arquivo.wav>         grava o áudio gerado (headless)
 //   --mute                      janela sem áudio (ritmo pelo relógio)
 //   --fallback-log <arquivo>    lista endereços executados pelo interpretador
+//   --dump-ram <prefixo>        grava <prefixo>_ewram.bin e <prefixo>_iwram.bin no fim (headless)
 //
 // Teclado (janela): setas, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R, Esc=sair.
 
@@ -41,6 +42,8 @@
 // Tabela gerada pelo recompilador (ou vazia, sem código gerado).
 extern const gba::RecompEntry tla_recomp_table[];
 extern const size_t tla_recomp_count;
+extern const gba::RecompOverlay tla_recomp_overlays[];
+extern const size_t tla_recomp_overlay_count;
 
 namespace fs = std::filesystem;
 
@@ -56,7 +59,7 @@ struct Options {
     bool headless = false, mute = false, interp = false;
     uint64_t frames = 600, shot_every = 0;
     bool frames_given = false;
-    std::string shot, shot_prefix = "frame", wav, fallback_log;
+    std::string shot, shot_prefix = "frame", wav, fallback_log, dump_ram;
     int scale = 3;
     std::vector<Press> script;
 };
@@ -133,8 +136,15 @@ void print_stats(const gba::Gba& g, const Options& o) {
     std::vector<std::pair<uint32_t, uint64_t>> fb(g.fallback_entries.begin(), g.fallback_entries.end());
     std::sort(fb.begin(), fb.end(), [](auto& a, auto& b) { return a.second > b.second; });
     for (size_t i = 0; i < fb.size() && i < 8; ++i)
-        std::printf("  fallback 0x%08X (%s) × %llu\n", fb[i].first & ~1u, (fb[i].first & 1) ? "thumb" : "arm",
-                    static_cast<unsigned long long>(fb[i].second));
+        std::printf("  fallback 0x%08X (%s) × %llu, %llu instruções\n", fb[i].first & ~1u,
+                    (fb[i].first & 1) ? "thumb" : "arm", static_cast<unsigned long long>(fb[i].second),
+                    static_cast<unsigned long long>(g.fallback_instrs.count(fb[i].first)
+                                                        ? g.fallback_instrs.at(fb[i].first) : 0));
+    std::vector<std::pair<uint32_t, uint64_t>> reg(g.interp_regions.begin(), g.interp_regions.end());
+    std::sort(reg.begin(), reg.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    for (size_t i = 0; i < reg.size() && i < 5; ++i)
+        std::printf("  interpretado a partir de 0x%08X (%s): %llu instruções\n", reg[i].first & ~1u,
+                    (reg[i].first & 1) ? "thumb" : "arm", static_cast<unsigned long long>(reg[i].second));
     if (!o.fallback_log.empty()) {
         std::ofstream f(o.fallback_log);
         for (auto& [a, n] : fb) {
@@ -165,6 +175,12 @@ int run_headless(gba::Gba& g, const Options& o) {
                 static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
                 g.frame_count / secs / 59.7275, g.has_recomp() ? "recompilado" : "interpretador");
     print_stats(g, o);
+    if (!o.dump_ram.empty()) {
+        std::ofstream(o.dump_ram + "_ewram.bin", std::ios::binary)
+            .write(reinterpret_cast<const char*>(g.bus.ewram.data()), g.bus.ewram.size());
+        std::ofstream(o.dump_ram + "_iwram.bin", std::ios::binary)
+            .write(reinterpret_cast<const char*>(g.bus.iwram.data()), g.bus.iwram.size());
+    }
     if (!o.shot.empty()) png::write_rgb(o.shot, g.frame().data(), gba::kScreenW, gba::kScreenH);
     if (!o.wav.empty()) {
         write_wav(o.wav, audio, gba::Apu::kSampleRate);
@@ -288,6 +304,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         else if (a == "--scale" && i + 1 < argc) o.scale = std::stoi(argv[++i]);
         else if (a == "--wav" && i + 1 < argc) o.wav = argv[++i];
         else if (a == "--fallback-log" && i + 1 < argc) o.fallback_log = argv[++i];
+        else if (a == "--dump-ram" && i + 1 < argc) o.dump_ram = argv[++i];
         else if (a == "--press" && i + 1 < argc) {
             Press p{};
             if (!parse_press(argv[++i], p)) {
@@ -326,7 +343,8 @@ int main(int argc, char** argv) {
     }
 
     auto g = std::make_unique<gba::Gba>(*rom);
-    if (!o.interp) g->set_recomp(tla_recomp_table, tla_recomp_count);
+    if (!o.interp)
+        g->set_recomp(tla_recomp_table, tla_recomp_count, tla_recomp_overlays, tla_recomp_overlay_count);
     fs::path save_path = o.rom;
     save_path.replace_extension(".sav");
     load_save(*g, save_path);

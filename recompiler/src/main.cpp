@@ -24,7 +24,9 @@ int usage() {
     std::fprintf(stderr,
                  "uso:\n"
                  "  tlarecomp info    <rom.gba>\n"
-                 "  tlarecomp analyze <rom.gba> [-o <dir>] [--config <arquivo>] [--disasm] [--no-scan] [--emit <dir>]\n");
+                 "  tlarecomp analyze <rom.gba> [-o <dir>] [--config <arquivo>] [--disasm] [--no-scan] [--emit <dir>]\n"
+                 "  tlarecomp emit    <rom.gba> (= analyze --emit generated/recomp)\n"
+                 "  tlarecomp dis     <rom.gba> <endereço> <n> arm|thumb [--at <endereço de execução>]\n");
     return 2;
 }
 
@@ -64,6 +66,28 @@ int cmd_info(const char* path) {
     return 0;
 }
 
+// tlarecomp dis <rom> <endereço> <n> arm|thumb [--at <endereço de execução>]
+// Desmonta n instruções em linha reta (útil para código copiado para a RAM).
+int cmd_dis(int argc, char** argv) {
+    if (argc < 4) return usage();
+    auto rom = load_supported(argv[0]);
+    if (!rom) return 1;
+    const uint32_t src = static_cast<uint32_t>(std::stoul(argv[1], nullptr, 0));
+    const uint32_t count = static_cast<uint32_t>(std::stoul(argv[2], nullptr, 0));
+    const bool thumb = !std::strcmp(argv[3], "thumb");
+    uint32_t at = src;
+    if (argc >= 6 && !std::strcmp(argv[4], "--at")) at = static_cast<uint32_t>(std::stoul(argv[5], nullptr, 0));
+    uint32_t off = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        core::arm::Instr in;
+        if (thumb) in = core::arm::decode_thumb(at + off, rom->read16(src + off), rom->read16(src + off + 2));
+        else in = core::arm::decode_arm(at + off, rom->read32(src + off));
+        std::printf("%08X:  %08X  %s\n", at + off, in.raw, core::arm::disassemble(in).c_str());
+        off += in.size;
+    }
+    return 0;
+}
+
 void write_disasm(const recomp::Analyzer& a, const fs::path& file) {
     std::ofstream out(file);
     for (const auto& [addr, f] : a.functions()) {
@@ -71,8 +95,11 @@ void write_disasm(const recomp::Analyzer& a, const fs::path& file) {
             << recomp::reason_name(f.reason) << (f.invalid ? ", INVÁLIDA: " + f.invalid_why : "") << ")\n";
         // Lista as instruções em ordem de endereço, marcando inícios de bloco.
         for (uint32_t pc = f.lo; pc < f.hi;) {
-            const auto kind = a.byte_map()[pc - core::kRomBase];
-            const bool ours = kind == (f.thumb ? recomp::ByteKind::Thumb : recomp::ByteKind::Arm);
+            // Overlays (código na RAM) não têm mapa de bytes: vale o conjunto de instruções.
+            const auto kind = a.in_rom(pc) ? a.byte_map()[pc - core::kRomBase]
+                              : f.instrs.count(pc) ? (f.thumb ? recomp::ByteKind::Thumb : recomp::ByteKind::Arm)
+                                                   : recomp::ByteKind::Unknown;
+            const bool ours = f.instrs.count(pc) && kind == (f.thumb ? recomp::ByteKind::Thumb : recomp::ByteKind::Arm);
             if (!ours) {
                 if (kind == recomp::ByteKind::Literal) {
                     char buf[64];
@@ -126,6 +153,14 @@ int cmd_analyze(int argc, char** argv, bool emit) {
     a.add_entry(rom->header().entry_point, false, recomp::EntryReason::Entry);
     if (scan) a.scan_code_pointers();
     a.run();
+    if (scan) {
+        size_t leaves = 0;
+        for (size_t n; (n = a.scan_leaf_pointers()) > 0;) {
+            leaves += n;
+            a.run();
+        }
+        std::printf("Funções folha : %zu achadas por ponteiro (2ª passada)\n", leaves);
+    }
 
     fs::create_directories(out_dir);
 
@@ -203,5 +238,6 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "info")) return cmd_info(argv[2]);
     if (!std::strcmp(argv[1], "analyze")) return cmd_analyze(argc - 2, argv + 2, false);
     if (!std::strcmp(argv[1], "emit")) return cmd_analyze(argc - 2, argv + 2, true);
+    if (!std::strcmp(argv[1], "dis")) return cmd_dis(argc - 2, argv + 2);
     return usage();
 }

@@ -39,17 +39,35 @@ bool Analyzer::in_rom(uint32_t addr) const {
     return addr >= core::kRomBase && addr < core::kRomBase + rom_.size();
 }
 
+const Overlay* Analyzer::overlay_at(uint32_t addr) const {
+    for (const auto& o : overlays_)
+        if (addr >= o.ram && addr < o.ram + o.size) return &o;
+    return nullptr;
+}
+
+bool Analyzer::in_code(uint32_t addr) const { return in_rom(addr) || overlay_at(addr) != nullptr; }
+
+uint32_t Analyzer::code_read32(uint32_t addr) const {
+    if (const Overlay* o = overlay_at(addr)) return rom_.read32(o->rom + (addr - o->ram));
+    return rom_.read32(addr);
+}
+
+uint16_t Analyzer::code_read16(uint32_t addr) const {
+    if (const Overlay* o = overlay_at(addr)) return rom_.read16(o->rom + (addr - o->ram));
+    return rom_.read16(addr);
+}
+
 Instr Analyzer::decode_at(uint32_t addr, bool thumb) const {
     if (thumb) {
-        uint16_t next = in_rom(addr + 2) ? rom_.read16(addr + 2) : 0;
-        return core::arm::decode_thumb(addr, rom_.read16(addr), next);
+        uint16_t next = in_code(addr + 2) ? code_read16(addr + 2) : 0;
+        return core::arm::decode_thumb(addr, code_read16(addr), next);
     }
-    return core::arm::decode_arm(addr, rom_.read32(addr));
+    return core::arm::decode_arm(addr, code_read32(addr));
 }
 
 void Analyzer::add_entry(uint32_t addr, bool thumb, EntryReason why) {
     addr &= thumb ? ~1u : ~3u;
-    if (!in_rom(addr) || skipped_.count(addr)) return;
+    if (!in_code(addr) || skipped_.count(addr)) return;
     auto [it, inserted] = functions_.try_emplace(addr);
     if (!inserted) return;
     it->second.addr = addr;
@@ -79,6 +97,43 @@ void Analyzer::consider_pointer(uint32_t value, EntryReason why) {
     if (looks_like_thumb_prologue(value & ~1u)) add_entry(value, true, why);
 }
 
+bool Analyzer::looks_like_leaf(uint32_t addr) const {
+    // Decodifica linearmente até achar um retorno; rejeita dados e instruções inválidas.
+    for (int i = 0; i < 64; ++i) {
+        const uint32_t pc = addr + i * 2;
+        if (!in_rom(pc + 1)) return false;
+        const ByteKind k = bytes_[pc - core::kRomBase];
+        if (k == ByteKind::Literal || k == ByteKind::Arm) return false;
+        if (rom_.read16(pc) == 0) return false;
+        const Instr in = decode_at(pc, true);
+        if (in.op == Op::UNDEFINED || in.op == Op::COPROC || in.op == Op::THUMB_BL_LO) return false;
+        if (in.op == Op::BX) return true;
+        if (in.op == Op::LDM && (in.reg_list & 0x8000)) return true;
+        if (in.op == Op::MOV && in.rd == 15) return true;
+        if (in.op == Op::B && in.cond == Cond::AL) return true;
+        if (in.op == Op::BL) ++i; // ocupa 4 bytes
+    }
+    return false;
+}
+
+size_t Analyzer::scan_leaf_pointers() {
+    // Região de código: até o fim da última função já descoberta na ROM.
+    uint32_t code_end = core::kRomBase;
+    for (const auto& [addr, f] : functions_)
+        if (in_rom(addr) && !f.invalid && f.hi > code_end) code_end = f.hi;
+    size_t added = 0;
+    for (uint32_t off = 0; off + 4 <= rom_.size(); off += 4) {
+        const uint32_t v = rom_.read32(core::kRomBase + off);
+        if (!(v & 1) || v < core::kRomBase || v >= code_end) continue;
+        const uint32_t a = v & ~1u;
+        if (functions_.count(a) || skipped_.count(a)) continue;
+        if (!looks_like_leaf(a)) continue;
+        add_entry(v, true, EntryReason::Scan);
+        ++added;
+    }
+    return added;
+}
+
 void Analyzer::add_pointer_table(uint32_t base, uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) {
         const uint32_t a = base + i * 4;
@@ -96,6 +151,7 @@ bool Analyzer::load_config(const std::string& path, std::string* error) {
     int n = 0;
     while (std::getline(in, line)) {
         ++n;
+        if (n == 1 && line.rfind("\xEF\xBB\xBF", 0) == 0) line.erase(0, 3); // BOM UTF-8
         if (auto c = line.find('#'); c != std::string::npos) line.resize(c);
         std::istringstream ss(line);
         std::string kind, a, b;
@@ -106,6 +162,12 @@ bool Analyzer::load_config(const std::string& path, std::string* error) {
             if (kind == "func" && (b == "arm" || b == "thumb")) add_entry(num(a), b == "thumb", EntryReason::Manual);
             else if (kind == "table" && !b.empty()) add_pointer_table(num(a), num(b));
             else if (kind == "skip" && !a.empty()) skip(num(a));
+            else if (kind == "entry" && !b.empty()) extra_entries_[num(a) & ~1u].insert(num(b) & ~1u);
+            else if (kind == "overlay" && !b.empty()) {
+                std::string size;
+                if (!(ss >> size)) throw std::invalid_argument(kind);
+                overlays_.push_back({num(a), num(b), num(size)});
+            }
             else throw std::invalid_argument(kind);
         } catch (const std::exception&) {
             if (error) *error = path + ":" + std::to_string(n) + ": linha inválida";
@@ -162,6 +224,10 @@ void Analyzer::explore(Function& f) {
     using Tag = RegState::Tag;
 
     std::vector<std::pair<uint32_t, State>> work{{f.addr, State{}}};
+    if (auto ex = extra_entries_.find(f.addr); ex != extra_entries_.end()) {
+        f.extra_entries = ex->second;
+        for (uint32_t e : ex->second) work.push_back({e, State{}});
+    }
     std::set<uint32_t> visited;
     f.lo = f.hi = f.addr;
 
@@ -191,14 +257,14 @@ void Analyzer::explore(Function& f) {
 
         bool prev_sets_lr = false; // "mov lr, pc" (ARM) antes de um BX ⇒ chamada
         for (;;) {
-            if (!in_rom(pc)) {
+            if (!in_code(pc)) {
                 f.invalid = true;
                 f.invalid_why = "saiu da ROM";
                 break;
             }
             // Pool de literais já identificado: chegamos aqui por fall-through depois de uma
             // chamada que não retorna (ex.: abort). Não decodificar dados como código.
-            if (bytes_[pc - core::kRomBase] == ByteKind::Literal) break;
+            if (in_rom(pc) && bytes_[pc - core::kRomBase] == ByteKind::Literal) break;
             if (!visited.insert(pc).second) break; // fluxo convergiu num bloco já visto
             if (++f.instr_count > kMaxFunctionInstrs) {
                 f.invalid = true;
@@ -208,7 +274,7 @@ void Analyzer::explore(Function& f) {
 
             // 0x0000 ("lsls r0, r0, #0") nunca é emitido pelo compilador: é padding depois
             // de uma chamada que não retorna.
-            if (f.thumb && rom_.read16(pc) == 0) break;
+            if (f.thumb && code_read16(pc) == 0) break;
 
             const Instr in = decode_at(pc, f.thumb);
             if (in.op == Op::UNDEFINED || in.op == Op::COPROC) {
@@ -231,9 +297,9 @@ void Analyzer::explore(Function& f) {
             bool rd_written = false;
             if (in.op == Op::LDR && in.rn == 15 && in.op2.is_imm && in.pre_index && !in.writeback) {
                 const uint32_t ea = in.up ? in.pc_value + in.op2.imm : in.pc_value - in.op2.imm;
-                if (in_rom(ea)) {
+                if (in_code(ea)) {
                     mark(ea, 4, ByteKind::Literal);
-                    out.value = rom_.read32(ea);
+                    out.value = code_read32(ea);
                     consider_pointer(*out.value, EntryReason::Pointer);
                 }
                 rd_written = true;
@@ -293,7 +359,7 @@ void Analyzer::explore(Function& f) {
                 const Instr first = decode_at(in.target, f.thumb);
                 if (first.op == Op::BX && first.rm < 15 && R[first.rm].value) {
                     const uint32_t t = *R[first.rm].value;
-                    if (in_rom(t)) {
+                    if (in_code(t)) {
                         add_entry(t, t & 1, EntryReason::Pointer);
                         f.callees.insert(t & ~1u);
                     } else {
@@ -311,7 +377,7 @@ void Analyzer::explore(Function& f) {
                     f.returns.insert(pc);
                 } else if (in.rm < 15 && t.value) {
                     const uint32_t v = *t.value;
-                    if (in_rom(v)) {
+                    if (in_code(v)) {
                         add_entry(v, v & 1, prev_sets_lr ? EntryReason::Call : EntryReason::Jump);
                         f.callees.insert(v & ~1u);
                     } else {
@@ -339,14 +405,14 @@ void Analyzer::explore(Function& f) {
                 if (in.pre_index && in.op2.is_imm && R[in.rn].value && R[in.rd].value) {
                     const uint32_t ea = in.up ? *R[in.rn].value + in.op2.imm : *R[in.rn].value - in.op2.imm;
                     const uint32_t v = *R[in.rd].value;
-                    if (ea == kIrqVector && in_rom(v)) add_entry(v, v & 1, EntryReason::Pointer);
+                    if (ea == kIrqVector && in_code(v)) add_entry(v, v & 1, EntryReason::Pointer);
                 }
                 break;
 
             case Op::LDR:
                 if (in.rd == 15) {
                     if (out.value) {
-                        if (in_rom(*out.value)) add_entry(*out.value, false, EntryReason::Jump);
+                        if (in_code(*out.value)) add_entry(*out.value, false, EntryReason::Jump);
                         else external_.push_back({*out.value, pc});
                     } else if (!f.thumb && in.rn == 15 && in.pre_index && !in.op2.is_imm && in.op2.rm == st.cmp_reg &&
                                in.op2.shift == core::arm::ShiftType::LSL && in.op2.shift_amount == 2) {
@@ -372,7 +438,7 @@ void Analyzer::explore(Function& f) {
                         const RegState* src = in.op == Op::MOV && plain_reg(in.op2) ? &R[in.op2.rm] : nullptr;
                         if (src && src->tag == Tag::TableEntry) {
                             if (!resolve_table(pc, src->base, src->count, st)) f.unresolved.push_back(pc);
-                        } else if (out.value && in_rom(*out.value)) {
+                        } else if (out.value && in_code(*out.value)) {
                             add_entry(*out.value, f.thumb, EntryReason::Jump);
                         } else {
                             f.unresolved.push_back(pc);

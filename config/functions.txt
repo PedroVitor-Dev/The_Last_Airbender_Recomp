@@ -11,3 +11,28 @@ table 0x080A4B20 13
 # Falsos positivos da varredura de ponteiros (dados que parecem "push {lr}").
 skip 0x080E060C
 skip 0x0810080E
+
+# Código ARM que o jogo copia da ROM para a IWRAM e executa lá (achado pelo
+# --fallback-log + comparação da IWRAM com a ROM).
+#   overlay <ram> <rom> <tamanho>
+overlay 0x03000000 0x08097C30 224   # mixer de som (ver abaixo)
+overlay 0x03004BE8 0x0800012C 512   # cópia do handler de IRQ (vetor aponta para cá)
+func 0x03000000 arm
+func 0x03004BE8 arm
+
+# Mixer de som em 0x03000000: "código encadeado". Cada canal guarda o ponteiro da
+# rotina que o processa; as rotinas saltam umas para as outras com "bx r8" e o laço
+# de amostras fica em +0x1C. Cada rotina tem prefixos "add r1, r1, #0x4C" (pular
+# canais), então qualquer um deles pode ser a entrada. Tudo vira uma função só.
+# (ver: tlarecomp dis <rom> 0x08097C30 56 arm --at 0x03000000)
+entry 0x03000000 0x0300001C   # laço de amostras (grava a amostra mixada)
+entry 0x03000000 0x03000044   # canal em laço (+2 canais pulados)
+entry 0x03000000 0x03000048
+entry 0x03000000 0x0300004C
+entry 0x03000000 0x0300007C   # canal de disparo único
+entry 0x03000000 0x03000080
+entry 0x03000000 0x03000084
+entry 0x03000000 0x030000AC   # canal encerrado (gravado via "strge pc")
+entry 0x03000000 0x030000B4   # canal inativo
+entry 0x03000000 0x030000B8
+entry 0x03000000 0x030000BC

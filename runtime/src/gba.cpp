@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 
 #include "gba/gba.h"
@@ -20,8 +21,10 @@ Gba::Gba(const core::Rom& rom) : bus(*this), cpu(*this), io(*this), ppu(*this), 
     next_event = video_event_;
 }
 
-void Gba::set_recomp(const RecompEntry* table, size_t count) {
+void Gba::set_recomp(const RecompEntry* table, size_t count, const RecompOverlay* overlays,
+                     size_t overlay_count) {
     recomp_.clear();
+    overlays_.assign(overlays, overlays + overlay_count);
     recomp_bitmap_.assign(rom_.size() / 16 + 1, 0);
     for (size_t i = 0; i < count; ++i) {
         recomp_[table[i].addr] = table[i].fn;
@@ -39,7 +42,7 @@ RecompFn Gba::find(uint32_t addr, bool thumb) const {
         const uint32_t h = (addr - 0x08000000) >> 1;
         if (!(recomp_bitmap_[h >> 3] & (1 << (h & 7)))) return nullptr;
     } else {
-        return nullptr; // só a ROM é recompilada
+        return find_overlay(addr, thumb);
     }
     auto it = recomp_.find(addr | (thumb ? 1u : 0u));
     return it == recomp_.end() ? nullptr : it->second;
@@ -174,19 +177,53 @@ void Gba::call_function(uint32_t addr, bool thumb) {
         fn(*this);
         return;
     }
-    ++fallback_entries[addr | (thumb ? 1u : 0u)];
+    const uint32_t key = addr | (thumb ? 1u : 0u);
+    ++fallback_entries[key];
+    const uint64_t before = cpu.instr_count;
     run_hybrid_until(cpu.r[14] & ~1u);
+    fallback_instrs[key] += cpu.instr_count - before;
 }
 
 void Gba::jump_indirect(uint32_t target) { call_function(target, target & 1); }
 
-void Gba::resume_until(uint32_t ret) { run_hybrid_until(ret); }
+void Gba::resume_until(uint32_t ret) {
+    // Retorno inesperado ou fall-through para código não analisado: conta como fallback.
+    const uint32_t key = cpu.r[15] | (cpu.t_ ? 1u : 0u);
+    ++fallback_entries[key];
+    static const bool trace = std::getenv("TLA_TRACE_RESUME") != nullptr;
+    static int traced = 0;
+    if (trace && traced < 20) {
+        ++traced;
+        std::fprintf(stderr, "[resume] pc=0x%08X (%s) esperado=0x%08X lr=0x%08X sp=0x%08X modo=0x%02X quadro=%llu\n",
+                     cpu.r[15], cpu.t_ ? "thumb" : "arm", ret, cpu.r[14], cpu.r[13], cpu.mode_,
+                     static_cast<unsigned long long>(frame_count));
+    }
+    const uint64_t before = cpu.instr_count;
+    run_hybrid_until(ret);
+    fallback_instrs[key] += cpu.instr_count - before;
+}
+
+RecompFn Gba::find_overlay(uint32_t addr, bool thumb) const {
+    for (const auto& o : overlays_) {
+        if (addr < o.ram || addr >= o.ram + o.size) continue;
+        // A cópia na RAM ainda é idêntica à ROM? (o jogo pode sobrescrever a região)
+        const uint8_t* ram = nullptr;
+        if ((o.ram >> 24) == 0x03) ram = &bus.iwram[o.ram & 0x7FFF];
+        else if ((o.ram >> 24) == 0x02) ram = &bus.ewram[o.ram & 0x3FFFF];
+        if (!ram || std::memcmp(ram, rom_.data() + (o.rom - 0x08000000), o.size) != 0) return nullptr;
+        auto it = recomp_.find(addr | (thumb ? 1u : 0u));
+        return it == recomp_.end() ? nullptr : it->second;
+    }
+    return nullptr;
+}
 
 void Gba::run_hybrid_until(uint32_t ret) {
+    uint64_t* region = nullptr; // contador do trecho interpretado atual (estatística)
     for (;;) {
         if (cpu.r[15] == ret) return;
         if (RecompFn fn = find(cpu.r[15], cpu.t_)) {
             ++recomp_calls;
+            region = nullptr;
             fn(*this);
             continue;
         }
@@ -194,6 +231,8 @@ void Gba::run_hybrid_until(uint32_t ret) {
             halt_wait();
             continue;
         }
+        if (!region) region = &interp_regions[cpu.r[15] | (cpu.t_ ? 1u : 0u)];
+        ++*region;
         cycles += cpu.step();
         if (cycles >= next_event) sync();
     }

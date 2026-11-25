@@ -120,6 +120,8 @@ private:
         for (const auto& [at, targets] : f_.tables)
             for (uint32_t t : targets)
                 if (f_.instrs.count(t)) labels_.insert(t);
+        for (uint32_t e : f_.extra_entries)
+            if (f_.instrs.count(e)) labels_.insert(e);
         // Qualquer instrução cuja anterior não flui para ela precisa de rótulo (alvo de goto).
         uint32_t prev_end = 0;
         for (uint32_t pc : f_.instrs) {
@@ -222,6 +224,15 @@ private:
             line("        }");
             return;
         }
+        if (!f_.extra_entries.empty()) {
+            // Código encadeado: alvos que são entradas desta função continuam aqui mesmo.
+            line("        switch ((%s) & ~1u) {", val.c_str());
+            line("        case %s: goto %s;", hex(f_.addr).c_str(), label(f_.addr).c_str());
+            for (uint32_t e : f_.extra_entries)
+                if (f_.instrs.count(e)) line("        case %s: goto %s;", hex(e).c_str(), label(e).c_str());
+            line("        default: break;");
+            line("        }");
+        }
         if (interworking) line("        g.jump_indirect(%s); return;", val.c_str());
         else line("        g.jump_indirect(((%s) & ~1u) | %s); return;", val.c_str(), tbit);
     }
@@ -288,7 +299,7 @@ private:
         case Op::BL: {
             line("        r[14] = %s;", hex(next | (f_.thumb ? 1u : 0u)).c_str());
             call_target(in.target, f_.thumb);
-            line("        if (r[15] != %s) g.resume_until(%s);", hex(next).c_str(), hex(next).c_str());
+            line("        if (r[15] != %s) return; // desempilhou além de nós: quem chamou confere", hex(next).c_str());
             return true;
         }
         case Op::BX: {
@@ -299,7 +310,7 @@ private:
                 if (f_.instrs.count(in.addr - 4) && prev.op == Op::MOV && prev.rd == 14 && !prev.op2.is_imm &&
                     prev.op2.rm == 15 && prev.op2.shift_amount == 0 && !prev.op2.shift_by_reg) {
                     line("        g.jump_indirect(%s);", v.c_str());
-                    line("        if (r[15] != %s) g.resume_until(%s);", hex(next).c_str(), hex(next).c_str());
+                    line("        if (r[15] != %s) return; // desempilhou além de nós: quem chamou confere", hex(next).c_str());
                     return true;
                 }
             }
@@ -313,7 +324,7 @@ private:
             line("        uint32_t t = r[14] + %s;", hex(in.op2.imm).c_str());
             line("        r[14] = %s;", hex(next | 1u).c_str());
             line("        g.call_function(t, true);");
-            line("        if (r[15] != %s) g.resume_until(%s);", hex(next).c_str(), hex(next).c_str());
+            line("        if (r[15] != %s) return; // desempilhou além de nós: quem chamou confere", hex(next).c_str());
             return true;
         case Op::SWI:
             line("        g.swi(%s, %s);", hex(in.thumb ? in.swi_comment : in.swi_comment >> 16).c_str(),
@@ -522,6 +533,11 @@ EmitStats emit_cpp(const Analyzer& a, const core::Rom& rom, const std::filesyste
         table += fmt("    {0x%08Xu, %s},\n", f->addr | (f->thumb ? 1u : 0u), fn_name(f->addr).c_str());
     table += "};\n";
     table += fmt("extern const size_t tla_recomp_count = %zu;\n", funcs.size());
+    table += "extern const gba::RecompOverlay tla_recomp_overlays[] = {\n";
+    for (const auto& o : a.overlays()) table += fmt("    {0x%08Xu, 0x%08Xu, %uu},\n", o.ram, o.rom, o.size);
+    if (a.overlays().empty()) table += "    {0, 0, 0},\n";
+    table += "};\n";
+    table += fmt("extern const size_t tla_recomp_overlay_count = %zu;\n", a.overlays().size());
     write_file(out_dir / "recomp_table.cpp", table);
     ++st.files;
     return st;
