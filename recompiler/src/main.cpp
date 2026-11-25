@@ -161,6 +161,10 @@ int cmd_analyze(int argc, char** argv, bool emit) {
         }
         std::printf("Funções folha : %zu achadas por ponteiro (2ª passada)\n", leaves);
     }
+    // Ponto fixo: remover uma pseudo-função pode liberar outra que só ela referenciava.
+    size_t pruned = 0;
+    for (size_t n; (n = a.prune_bl_jumps()) > 0;) pruned += n;
+    std::printf("bl como salto : %zu pseudo-funções removidas\n", pruned);
 
     fs::create_directories(out_dir);
 

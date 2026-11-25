@@ -89,7 +89,29 @@ void Gba::advance_video() {
     }
 }
 
+void Gba::copy_state_from(const Gba& o) {
+    bus.bios = o.bus.bios;
+    bus.ewram = o.bus.ewram;
+    bus.iwram = o.bus.iwram;
+    bus.palette = o.bus.palette;
+    bus.vram = o.bus.vram;
+    bus.oam = o.bus.oam;
+    bus.eeprom = o.bus.eeprom;
+    cpu.copy_state_from(o.cpu);
+    io.copy_state_from(o.io);
+    ppu.copy_state_from(o.ppu);
+    frame_count = o.frame_count;
+    cycles = o.cycles;
+    next_event = o.next_event;
+    line_ = o.line_;
+    in_hblank_ = o.in_hblank_;
+    frame_done_ = o.frame_done_;
+    line_start_ = o.line_start_;
+    video_event_ = o.video_event_;
+}
+
 void Gba::sync() {
+    if (cycles > cycle_limit) throw StopRequested{};
     for (;;) {
         io.update_timers(cycles);
         if (cycles < video_event_) break;

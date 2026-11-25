@@ -90,6 +90,7 @@ public:
     std::array<uint8_t, 0x400> oam{};
     const std::vector<uint8_t>* rom = nullptr;
     Eeprom eeprom;
+    uint64_t io_accesses = 0; // diagnóstico (teste diferencial): leituras/escritas em IO
 
 private:
     static uint32_t vram_offset(uint32_t a) {
@@ -131,6 +132,7 @@ public:
 
     void switch_mode(uint32_t new_mode);
     void enter_irq();
+    void copy_state_from(const Cpu& o); // tudo menos a referência ao Gba e o trace
 
 private:
     int bank_index(uint32_t mode) const;
@@ -183,6 +185,7 @@ public:
     uint64_t next_timer_event(uint64_t now) const;
 
     void set_keys(uint16_t pressed); // máscara de Key pressionadas
+    void copy_state_from(const Io& o);
 
     std::array<DmaChannel, 4> dma;
     std::array<Timer, 4> timers;
@@ -210,6 +213,7 @@ public:
     void render_line(int line);
     void latch_affine();            // início do VBlank: recarrega referência X/Y
     void on_affine_ref_write(int bg); // escrita em BGxX/BGxY
+    void copy_state_from(const Ppu& o) { affine_x_ = o.affine_x_; affine_y_ = o.affine_y_; }
     const std::array<uint32_t, kScreenW * kScreenH>& frame() const { return frame_; }
 
 private:
@@ -264,6 +268,11 @@ public:
     const std::array<uint32_t, kScreenW * kScreenH>& frame() const { return ppu.frame(); }
     uint64_t now() const { return cycles; }
     void request_sync() { next_event = cycles; }
+    // Copia o estado emulado de outra instância (memórias, CPU, IO, vídeo). Não copia
+    // a APU nem as tabelas de código recompilado. Usado pelo teste diferencial.
+    void copy_state_from(const Gba& o);
+    // Vigia: sync() lança StopRequested quando cycles passa deste valor.
+    uint64_t cycle_limit = UINT64_MAX;
 
     // ── API usada pelo código recompilado ──
     void sync();                                 // processa eventos vencidos (vídeo, timers)

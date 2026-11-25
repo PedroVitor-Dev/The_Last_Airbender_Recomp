@@ -116,6 +116,51 @@ bool Analyzer::looks_like_leaf(uint32_t addr) const {
     return false;
 }
 
+// Epílogo compartilhado alcançado por "bl" usado como salto longo (o b do Thumb só
+// alcança ±2 KB): só movimenta registradores, desempilha e retorna — sem push, sem
+// gravações em memória e sem chamadas.
+bool Analyzer::is_shared_epilogue(uint32_t addr) const {
+    bool popped = false;
+    for (int i = 0; i < 16; ++i) {
+        const uint32_t pc = addr + i * 2;
+        if (!in_code(pc)) return false;
+        const Instr in = decode_at(pc, true);
+        if (in.op == Op::LDM && in.rn == 13 && in.writeback && in.up) {
+            if (in.reg_list & 0x8000) return true; // pop {..., pc}
+            popped = true;
+            continue;
+        }
+        if (in.op == Op::BX) return popped;
+        if (in.is_data_processing() && !in.is_compare() && in.rd != 15) continue;
+        return false;
+    }
+    return false;
+}
+
+size_t Analyzer::prune_bl_jumps() {
+    // Para cada alvo de BL: todas as referências vêm de dentro de uma função que já
+    // contém o alvo no próprio corpo?
+    std::map<uint32_t, bool> only_internal; // alvo → só referências internas até agora
+    for (const auto& [addr, f] : functions_) {
+        for (uint32_t pc : f.instrs) {
+            const Instr in = decode_at(pc, f.thumb);
+            if (in.op != Op::BL) continue;
+            if (in.target == f.addr) continue; // autorreferência da própria pseudo-função
+            const bool internal = f.instrs.count(in.target) != 0;
+            auto [it, inserted] = only_internal.try_emplace(in.target, internal);
+            if (!inserted) it->second = it->second && internal;
+        }
+    }
+    size_t removed = 0;
+    for (const auto& [target, internal] : only_internal) {
+        auto it = functions_.find(target);
+        if (!internal || it == functions_.end() || it->second.reason != EntryReason::Call) continue;
+        functions_.erase(it);
+        ++removed;
+    }
+    return removed;
+}
+
 size_t Analyzer::scan_leaf_pointers() {
     // Região de código: até o fim da última função já descoberta na ROM.
     uint32_t code_end = core::kRomBase;
@@ -127,6 +172,8 @@ size_t Analyzer::scan_leaf_pointers() {
         if (!(v & 1) || v < core::kRomBase || v >= code_end) continue;
         const uint32_t a = v & ~1u;
         if (functions_.count(a) || skipped_.count(a)) continue;
+        // Já é código de outra função (meio de função): não é entrada.
+        if (bytes_[a - core::kRomBase] == ByteKind::Thumb) continue;
         if (!looks_like_leaf(a)) continue;
         add_entry(v, true, EntryReason::Scan);
         ++added;
@@ -353,6 +400,11 @@ void Analyzer::explore(Function& f) {
                 break;
 
             case Op::BL: {
+                if (f.thumb && in.cond == Cond::AL && is_shared_epilogue(in.target)) {
+                    // "bl" como salto longo para o epílogo: faz parte desta função.
+                    work.push_back({in.target, st});
+                    break;
+                }
                 add_entry(in.target, f.thumb, EntryReason::Call);
                 f.callees.insert(in.target);
                 // Veneer "_call_via_rN": o alvo é só "bx rN"; resolvemos com o rN do chamador.

@@ -102,7 +102,7 @@ uint32_t Bus::access_cycles(uint32_t a, bool wide) {
     case 0x00: return a < 0x4000 ? load<T>(&bios[a & (0x4000 - sizeof(T))]) : T(0);             \
     case 0x02: return load<T>(&ewram[a & (0x40000 - sizeof(T))]);                                \
     case 0x03: return load<T>(&iwram[a & (0x8000 - sizeof(T))]);                                 \
-    case 0x04: return (a & 0xFFFFFF) < 0x400 ? IO_READ : T(0);                                   \
+    case 0x04: ++io_accesses; return (a & 0xFFFFFF) < 0x400 ? IO_READ : T(0);                    \
     case 0x05: return load<T>(&palette[a & (0x400 - sizeof(T))]);                               \
     case 0x06: return load<T>(&vram[vram_offset(a) & ~(uint32_t)(sizeof(T) - 1)]);               \
     case 0x07: return load<T>(&oam[a & (0x400 - sizeof(T))]);                                    \
@@ -128,7 +128,7 @@ void Bus::write8(uint32_t a, uint8_t v) {
     switch (a >> 24) {
     case 0x02: ewram[a & 0x3FFFF] = v; break;
     case 0x03: iwram[a & 0x7FFF] = v; break;
-    case 0x04: if ((a & 0xFFFFFF) < 0x400) gba_.io.write8(a & 0x3FF, v); break;
+    case 0x04: ++io_accesses; if ((a & 0xFFFFFF) < 0x400) gba_.io.write8(a & 0x3FF, v); break;
     case 0x05: store<uint16_t>(&palette[a & 0x3FE], static_cast<uint16_t>(v * 0x101)); break;
     case 0x06: {
         // Escrita de byte em VRAM duplica no halfword (só na área de BG); OBJ ignora.
@@ -144,7 +144,7 @@ void Bus::write16(uint32_t a, uint16_t v) {
     switch (a >> 24) {
     case 0x02: store(&ewram[a & 0x3FFFE], v); break;
     case 0x03: store(&iwram[a & 0x7FFE], v); break;
-    case 0x04: if ((a & 0xFFFFFF) < 0x400) gba_.io.write16(a & 0x3FE, v); break;
+    case 0x04: ++io_accesses; if ((a & 0xFFFFFF) < 0x400) gba_.io.write16(a & 0x3FE, v); break;
     case 0x05: store(&palette[a & 0x3FE], v); break;
     case 0x06: store(&vram[vram_offset(a) & ~1u], v); break;
     case 0x07: store(&oam[a & 0x3FE], v); break;
@@ -158,6 +158,7 @@ void Bus::write32(uint32_t a, uint32_t v) {
     case 0x02: store(&ewram[a & 0x3FFFC], v); break;
     case 0x03: store(&iwram[a & 0x7FFC], v); break;
     case 0x04:
+        ++io_accesses;
         if ((a & 0xFFFFFF) < 0x400) {
             gba_.io.write16(a & 0x3FC, static_cast<uint16_t>(v));
             gba_.io.write16((a & 0x3FC) + 2, static_cast<uint16_t>(v >> 16));

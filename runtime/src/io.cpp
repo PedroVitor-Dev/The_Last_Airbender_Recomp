@@ -20,6 +20,14 @@ Io::Io(Gba& gba) : gba_(gba) {
     }
 }
 
+void Io::copy_state_from(const Io& o) {
+    regs_ = o.regs_;
+    dma = o.dma;
+    timers = o.timers;
+    fifo = o.fifo;
+    keys_pressed_ = o.keys_pressed_;
+}
+
 void Io::raise(uint16_t irq) {
     reg(REG_IF) |= irq;
     gba_.request_sync();

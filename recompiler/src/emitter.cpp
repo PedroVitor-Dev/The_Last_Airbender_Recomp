@@ -113,7 +113,7 @@ private:
             if (f_.instrs.count(b)) labels_.insert(b);
         for (uint32_t pc : f_.instrs) {
             const Instr in = a_.decode_at(pc, f_.thumb);
-            if (in.op == Op::B && f_.instrs.count(in.target)) labels_.insert(in.target);
+            if ((in.op == Op::B || in.op == Op::BL) && f_.instrs.count(in.target)) labels_.insert(in.target);
             const uint32_t next = pc + in.size;
             if (f_.instrs.count(next) && (in.op == Op::B || in.writes_pc() || in.op == Op::BL)) labels_.insert(next);
         }
@@ -298,6 +298,11 @@ private:
             return false;
         case Op::BL: {
             line("        r[14] = %s;", hex(next | (f_.thumb ? 1u : 0u)).c_str());
+            // "bl" para código desta mesma função (fora a entrada: recursão) é salto longo.
+            if (f_.instrs.count(in.target) && in.target != f_.addr && !f_.extra_entries.count(in.target)) {
+                line("        goto %s; // bl usado como salto longo", label(in.target).c_str());
+                return false;
+            }
             call_target(in.target, f_.thumb);
             line("        if (r[15] != %s) return; // desempilhou além de nós: quem chamou confere", hex(next).c_str());
             return true;

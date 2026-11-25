@@ -75,6 +75,9 @@ public:
     // Depois de run(): aceita ponteiros Thumb para funções folha (sem push {lr}) na região
     // de código, validados por decodificação até um retorno. Devolve quantas achou.
     size_t scan_leaf_pointers();
+    // Remove "funções" criadas só por bl usados como salto longo dentro de outra função
+    // (o alvo já faz parte do corpo de quem o referencia). Devolve quantas removeu.
+    size_t prune_bl_jumps();
     void run();
 
     const std::map<uint32_t, Function>& functions() const { return functions_; }
@@ -94,6 +97,7 @@ private:
     void explore(Function& f);
     bool looks_like_thumb_prologue(uint32_t addr) const;
     bool looks_like_leaf(uint32_t addr) const;
+    bool is_shared_epilogue(uint32_t addr) const;
     void consider_pointer(uint32_t value, EntryReason why);
     void mark(uint32_t addr, uint32_t size, ByteKind kind);
 

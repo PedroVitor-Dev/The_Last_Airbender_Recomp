@@ -62,6 +62,10 @@ if(WIN32)
     target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32)
 endif()
 
+# Teste diferencial recompilado × interpretador
+add_executable(tlaverify frontend/src/verify.cpp)
+target_link_libraries(tlaverify PRIVATE tla_gba tla_recomp)
+
 # Testes
 enable_testing()
 add_executable(test_decoder tests/test_decoder.cpp)

@@ -94,6 +94,20 @@ void Cpu::reset_after_bios() {
     halted = false;
 }
 
+void Cpu::copy_state_from(const Cpu& o) {
+    r = o.r;
+    halted = o.halted;
+    n_ = o.n_, z_ = o.z_, c_ = o.c_, v_ = o.v_;
+    i_ = o.i_, f_ = o.f_, t_ = o.t_;
+    mode_ = o.mode_;
+    spsr_ = o.spsr_;
+    bank_r13_ = o.bank_r13_;
+    bank_r14_ = o.bank_r14_;
+    bank_spsr_ = o.bank_spsr_;
+    bank_fiq_r8_ = o.bank_fiq_r8_;
+    bank_usr_r8_ = o.bank_usr_r8_;
+}
+
 void Cpu::branch_to(uint32_t addr, bool thumb) {
     t_ = thumb;
     r[15] = addr & (thumb ? ~1u : ~3u);
