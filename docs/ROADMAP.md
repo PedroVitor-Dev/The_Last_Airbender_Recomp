@@ -42,7 +42,7 @@
   roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
 - [x] IRQs atendidas no instante certo (reagendar ao escrever em timer; atender ao limpar o
   bit I); amostras do FIFO no instante exato do estouro
-- [ ] Conversão ARGB com SIMD;
+- [x] Conversão ARGB com SIMD testada e descartada (~2% mais lenta que a tabela);
   otimizações do código gerado (flags preguiçosas) só depois, por terem pouco retorno (~10%)
 
 ## Fase 4 — Melhorias de PC

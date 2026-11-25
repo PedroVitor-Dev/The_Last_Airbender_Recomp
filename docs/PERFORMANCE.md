@@ -96,6 +96,10 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 **Tentativas medidas e descartadas:**
 - separar o laço da composição em versões com e sem janela (template): ~5% mais lento;
+- **conversão BGR555 → ARGB com SSE2** (separar canais, expandir 5 → 8 bits, intercalar):
+  correta (`test_ppu` e 70 quadros idênticos), mas ~2% mais lenta no A/B de 9 rodadas
+  (mediana 3 511 contra 3 583 fps). A tabela de 32 K entradas (128 KB) fica no cache L2, e
+  uma leitura por pixel sai mais barata que as operações vetoriais;
 - **timers "preguiçosos"**: estouros que só alimentam o FIFO deixam de ser eventos (658 → 456
   syncs por quadro), com saída idêntica (70 quadros, WAV byte a byte e 4 118 IRQs iguais à
   estratégia precisa, comparadas no mesmo binário). Mas no A/B sem `--profile` o ganho foi
@@ -120,8 +124,10 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 ## Próximos passos possíveis (por retorno esperado)
 
-1. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
-2. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
+Com o jogo a ~60x o tempo real (menos de 2% de um núcleo a 60 fps), as últimas tentativas
+deram ganho nulo ou negativo. O desempenho deixou de ser prioridade.
+
+1. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
    tempo, então o ganho total máximo é pequeno.
 
 ## Como validar uma otimização
