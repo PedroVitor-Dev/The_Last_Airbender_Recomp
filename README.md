@@ -8,7 +8,7 @@ hardware do GBA.
 
 ## Status
 
-Fase 0: fundação. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Fase 1: análise do código (decodificador ARMv4T e descoberta de funções). Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -20,8 +20,12 @@ Fase 0: fundação. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE
 
 ```powershell
 .\scripts\build.ps1
-.\build\release\tlarecomp.exe "roms\<sua-rom>.gba"
+.\build\release\test_decoder.exe
+.\build\release\tlarecomp.exe info    "roms\<sua-rom>.gba"
+.\build\release\tlarecomp.exe analyze "roms\<sua-rom>.gba" --disasm
 ```
+
+A análise grava relatórios em `generated/analysis/` (fora do Git).
 
 ## Licença
 

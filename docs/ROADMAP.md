@@ -6,9 +6,10 @@
 - [x] Build CMake/Ninja com MSVC e leitura do header em C++
 
 ## Fase 1 — Entender o código
-- [ ] Decodificador ARMv4T (ARM + Thumb) com disassembler textual e testes
-- [ ] Descoberta de funções a partir do entry point e dos alvos de `BL`
-- [ ] Mapa de código × dados; relatório de cobertura
+- [x] Decodificador ARMv4T (ARM + Thumb) com disassembler textual e testes
+- [x] Descoberta de funções (entry, `BL`, ponteiros, tabelas de switch, config manual)
+- [x] Mapa de código × dados; relatório de cobertura (3 640 funções, 1 salto indireto restante)
+- [ ] Detectar funções folha alcançáveis só por ponteiro (sem `push {lr}`)
 - [ ] Extrator do sistema de arquivos interno
 
 ## Fase 2 — Runtime + interpretador

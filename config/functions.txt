@@ -1,0 +1,13 @@
+# Entradas manuais para a análise de funções (tlarecomp analyze).
+#   func  <addr> arm|thumb   força uma função
+#   table <addr> <n>         tabela de n ponteiros de função (bit 0 = Thumb)
+#   skip  <addr>             nunca tratar como função (falso positivo)
+# Diretivas "skip" valem para tudo, então podem aparecer em qualquer lugar do arquivo.
+
+# Despachante de IRQ (ARM, 0x0800012C) indexa esta tabela pelo bit do IF.
+# 13 handlers Thumb; a 14ª entrada (cartucho) não é usada.
+table 0x080A4B20 13
+
+# Falsos positivos da varredura de ponteiros (dados que parecem "push {lr}").
+skip 0x080E060C
+skip 0x0810080E
