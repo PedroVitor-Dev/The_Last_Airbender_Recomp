@@ -14,7 +14,8 @@
 
 namespace gba {
 
-Gba::Gba(const core::Rom& rom) : bus(*this), cpu(*this), io(*this), ppu(*this), apu(*this), rom_(rom.bytes()) {
+Gba::Gba(const core::Rom& rom)
+    : bus(*this), cpu(*this), io(*this), ppu(*this), apu(*this), rom_(rom.bytes()), rom_sha1_(rom.sha1()) {
     bus.rom = &rom_;
     bios_install_stub(bus);
     cpu.reset_after_bios();
@@ -274,9 +275,17 @@ void Gba::unimplemented(uint32_t pc, const char* what) {
 
 void Gba::run(const std::function<bool()>& on_frame) {
     on_frame_ = on_frame;
-    try {
-        run_hybrid_until(0xFFFFFFFF); // nunca retorna: só sai por StopRequested
-    } catch (const StopRequested&) {
+    for (;;) {
+        try {
+            run_hybrid_until(0xFFFFFFFF); // nunca retorna: só sai por exceção
+            break;
+        } catch (const StopRequested&) {
+            break;
+        } catch (const RestartRequested&) {
+            // Estado carregado (load_state_and_restart): a pilha C++ do código recompilado foi
+            // desfeita. Recomeça do PC salvo; quadros que estavam no meio de funções seguem
+            // pelo interpretador até retornar, e o que eles chamam volta a ser recompilado.
+        }
     }
     on_frame_ = nullptr;
 }

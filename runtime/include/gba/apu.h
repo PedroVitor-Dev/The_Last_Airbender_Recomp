@@ -27,6 +27,9 @@ public:
 
     // Amostras estéreo intercaladas acumuladas desde a última chamada.
     std::vector<int16_t> take_samples();
+
+    void save(class StateWriter& w) const;
+    void load(class StateReader& r);
     const std::vector<int16_t>& pending() const { return out_; }
 
 private:

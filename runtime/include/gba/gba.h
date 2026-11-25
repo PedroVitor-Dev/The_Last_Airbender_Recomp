@@ -18,6 +18,7 @@
 
 #include "core/rom.h"
 #include "gba/apu.h"
+#include "gba/state.h"
 
 namespace gba {
 
@@ -55,6 +56,9 @@ public:
     std::vector<uint8_t>& data() { return data_; }
     bool dirty() const { return dirty_; }
     void clear_dirty() { dirty_ = false; }
+    // Save state guarda só o protocolo serial; o conteúdo (save do jogo) não é tocado.
+    void save_protocol(StateWriter& w) const;
+    void load_protocol(StateReader& r);
 
 private:
     enum class State { Idle, Command, Address, WriteData, End, ReadDummy, ReadData };
@@ -133,6 +137,8 @@ public:
     void switch_mode(uint32_t new_mode);
     void enter_irq();
     void copy_state_from(const Cpu& o); // tudo menos a referência ao Gba e o trace
+    void save(StateWriter& w) const;
+    void load(StateReader& r);
 
 private:
     int bank_index(uint32_t mode) const;
@@ -186,6 +192,8 @@ public:
 
     void set_keys(uint16_t pressed); // máscara de Key pressionadas
     void copy_state_from(const Io& o);
+    void save(StateWriter& w) const;
+    void load(StateReader& r);
 
     std::array<DmaChannel, 4> dma;
     std::array<Timer, 4> timers;
@@ -216,6 +224,8 @@ public:
     void latch_affine();            // início do VBlank: recarrega referência X/Y
     void on_affine_ref_write(int bg); // escrita em BGxX/BGxY
     void copy_state_from(const Ppu& o) { affine_x_ = o.affine_x_; affine_y_ = o.affine_y_; }
+    void save(StateWriter& w) const;
+    void load(StateReader& r); // também invalida as caches de paleta e OAM
     const std::array<uint32_t, kScreenW * kScreenH>& frame() const { return frame_; }
 
 private:
@@ -276,6 +286,8 @@ struct RecompOverlay {
 
 // Lançada de dentro de sync() quando o frontend pede para parar.
 struct StopRequested {};
+// Lançada de dentro de sync() para desempilhar o código recompilado e carregar um estado.
+struct RestartRequested {};
 
 // ──────────────────────────────────────────────────────────────── Gba ──
 class Gba {
@@ -297,6 +309,16 @@ public:
     // Copia o estado emulado de outra instância (memórias, CPU, IO, vídeo). Não copia
     // a APU nem as tabelas de código recompilado. Usado pelo teste diferencial.
     void copy_state_from(const Gba& o);
+
+    // ── Save states (ver state.h) ──
+    // Estado completo serializado (cabeçalho, versão, SHA-1 da ROM e seções).
+    std::vector<uint8_t> save_state() const;
+    // Aplica um estado (lança std::runtime_error se for de outra ROM/versão ou estiver
+    // corrompido). Fora de run(), aplica na hora.
+    void load_state(const std::vector<uint8_t>& bytes);
+    // Dentro de run() (ex.: no callback de quadro): valida, desempilha o código em execução e
+    // recomeça a partir do estado. Não retorna.
+    [[noreturn]] void load_state_and_restart(const std::vector<uint8_t>& bytes);
     // Vigia: sync() lança StopRequested quando cycles passa deste valor.
     uint64_t cycle_limit = UINT64_MAX;
     bool render = true; // diagnóstico: false pula a renderização (não altera o estado do jogo)
@@ -334,6 +356,8 @@ private:
     void begin_line();
 
     std::vector<uint8_t> rom_;
+    std::string rom_sha1_;
+    void apply_state(const std::vector<uint8_t>& bytes); // sem transação (ver load_state)
     std::unordered_map<uint32_t, RecompFn> recomp_;
     std::vector<uint8_t> recomp_bitmap_; // 1 bit por halfword da ROM: há função aqui?
     std::vector<RecompOverlay> overlays_;

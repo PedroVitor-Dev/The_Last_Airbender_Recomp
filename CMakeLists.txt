@@ -36,6 +36,7 @@ add_library(tla_gba STATIC
     runtime/src/ppu.cpp
     runtime/src/bios.cpp
     runtime/src/apu.cpp
+    runtime/src/state.cpp
     runtime/src/gba.cpp)
 target_include_directories(tla_gba PUBLIC runtime/include)
 target_link_libraries(tla_gba PUBLIC tla_core)
@@ -86,3 +87,5 @@ add_test(NAME decoder COMMAND test_decoder)
 add_executable(test_ppu tests/test_ppu.cpp)
 target_link_libraries(test_ppu PRIVATE tla_gba)
 add_test(NAME ppu_compose COMMAND test_ppu)
+add_executable(test_state tests/test_state.cpp)
+target_link_libraries(test_state PRIVATE tla_gba tla_recomp)
