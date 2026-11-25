@@ -34,7 +34,10 @@
 - [x] Fallback com estatísticas (`--fallback-log`) e teste diferencial (`tlaverify`)
 - [x] **Marco: jogo rodando recompilado** — 2 instruções interpretadas em 7000 quadros,
   ~16x tempo real, 0 divergências em 1472 execuções (621 funções)
-- [ ] Ampliar a cobertura do `tlaverify` (mais fases e menus; IRQs habilitadas no teste)
+- [x] Ampliar a verificação: fuzz de todas as funções, fuzzer de instruções (ROM sintética)
+  e teste de mutação — ver [TESTING.md](TESTING.md)
+- [ ] Replay com IRQs habilitadas (exige timing idêntico entre os modos) e roteiros de fases
+  mais adiantadas
 - [ ] Desempenho: flags preguiçosas, registradores em variáveis locais, menos `sync_at`
 
 ## Fase 4 — Melhorias de PC

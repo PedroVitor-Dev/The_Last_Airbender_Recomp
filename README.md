@@ -58,8 +58,13 @@ Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select,
 .\build\release\tlaverify.exe "roms\<sua-rom>.gba" --frames 3000 --press START@900-905
 ```
 
-O `tlaverify` compara cada função recompilada com o interpretador, a partir de estados reais
-do jogo.
+Testes de equivalência recompilado × interpretador (detalhes em [docs/TESTING.md](docs/TESTING.md)):
+
+```powershell
+.\build\release\tlaverify.exe "roms\<sua-rom>.gba" --frames 3000 --fuzz 5 --press START@900-905
+.\scripts\test_synth.ps1        # fuzzer de instruções (ROM sintética)
+.\scripts\mutation_test.ps1     # os testes ainda pegam bugs conhecidos?
+```
 
 ## Assets
 

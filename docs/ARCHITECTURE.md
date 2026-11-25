@@ -78,13 +78,14 @@ encadeado, como o mixer de som).
 
 ## Verificação
 
-`tlaverify` roda o jogo no interpretador. Nas primeiras chamadas de cada função, copia o estado
-completo para duas instâncias: uma executa a função interpretada, a outra recompilada, com IRQs
-mascaradas e um limite de ciclos. Registradores, flags, EWRAM, IWRAM, VRAM, paleta e OAM
-precisam ficar idênticos.
+O interpretador é o oráculo, e a comparação é sempre recompilado × interpretador a partir do
+mesmo estado. São três frentes:
+- **replay** de chamadas reais do jogo;
+- **fuzz** de todas as funções com registradores sorteados;
+- um **fuzzer de instruções** sobre uma ROM sintética, que testa o emissor instrução a instrução.
 
-Diferenças em funções que acessam IO são marcadas como inconclusivas, porque os dois modos
-contam ciclos de forma diferente.
+Um teste de mutação confirma que essas frentes detectam bugs conhecidos. Detalhes em
+[TESTING.md](TESTING.md).
 
 ## Decisões
 
