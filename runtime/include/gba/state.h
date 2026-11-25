@@ -46,14 +46,14 @@ public:
         get_bytes(&v, sizeof v);
     }
     void get_bytes(void* dst, size_t n) {
-        if (pos_ + n > n_) throw std::runtime_error("save state truncado ou corrompido");
+        if (pos_ + n > n_) throw std::runtime_error("truncated or corrupted save state");
         std::memcpy(dst, p_ + pos_, n);
         pos_ += n;
     }
     template <typename T> void get_vector(std::vector<T>& v, size_t max_elems) {
         uint32_t n = 0;
         get(n);
-        if (n > max_elems) throw std::runtime_error("save state corrompido (tamanho inválido)");
+        if (n > max_elems) throw std::runtime_error("corrupted save state (invalid size)");
         v.resize(n);
         if (n) get_bytes(v.data(), n * sizeof(T));
     }

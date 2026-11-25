@@ -47,7 +47,7 @@ interpreter show **0 divergences**.
 
 <div align="center">
   <img src="docs/images/menu.png" alt="Settings screen" width="480"><br>
-  <sub>The settings screen, drawn with the palette of the game's dialog boxes (UI currently in Portuguese).</sub>
+  <sub>The settings screen, drawn with the palette of the game's dialog boxes.</sub>
 </div>
 
 ## 🎮 How to play

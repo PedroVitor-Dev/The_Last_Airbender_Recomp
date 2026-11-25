@@ -80,6 +80,21 @@ bool parse_bool(const std::string& v, bool& out) {
     return false;
 }
 
+// Nomes antigos (em português) de seções e chaves, aceitos para que um tlagba.ini criado por
+// versões anteriores continue valendo. O arquivo é regravado em inglês na próxima mudança.
+std::string canonical(const std::string& n) {
+    static const std::pair<const char*, const char*> kAliases[] = {
+        {"JANELA", "WINDOW"},           {"ESCALA", "SCALE"},           {"TELA_CHEIA", "FULLSCREEN"},
+        {"MUDO", "MUTE"},               {"TECLADO", "KEYBOARD"},       {"CONTROLE", "GAMEPAD"},
+        {"ANALOGICO", "ANALOG"},        {"ZONA_MORTA", "DEADZONE"},    {"ATALHOS", "SHORTCUTS"},
+        {"SALVAR_ESTADO", "SAVE_STATE"}, {"CARREGAR_ESTADO", "LOAD_STATE"}, {"SLOT_ANTERIOR", "PREV_SLOT"},
+        {"PROXIMO_SLOT", "NEXT_SLOT"},  {"PAUSA", "PAUSE"},            {"CAPTURA", "SCREENSHOT"},
+    };
+    for (const auto& [old_name, name] : kAliases)
+        if (n == old_name) return name;
+    return n;
+}
+
 int button_index(const std::string& n) {
     for (int i = 0; i < BTN_COUNT; ++i)
         if (n == kButtonNames[i]) return i;
@@ -98,42 +113,42 @@ void parse(const std::string& text, Config& c, std::vector<std::string>& warn) {
         line = trim(line);
         if (line.empty()) continue;
         if (line.front() == '[' && line.back() == ']') {
-            section = upper(trim(line.substr(1, line.size() - 2)));
+            section = canonical(upper(trim(line.substr(1, line.size() - 2))));
             continue;
         }
         const auto eq = line.find('=');
-        const std::string where = "linha " + std::to_string(lineno);
+        const std::string where = "line " + std::to_string(lineno);
         if (eq == std::string::npos) {
-            warn.push_back(where + ": falta '='");
+            warn.push_back(where + ": missing '='");
             continue;
         }
-        const std::string key = upper(trim(line.substr(0, eq)));
+        const std::string key = canonical(upper(trim(line.substr(0, eq))));
         const std::string val = trim(line.substr(eq + 1));
-        auto bad = [&] { warn.push_back(where + ": valor inválido para " + key); };
+        auto bad = [&] { warn.push_back(where + ": invalid value for " + key); };
 
-        if (section == "JANELA") {
-            if (key == "ESCALA") {
+        if (section == "WINDOW") {
+            if (key == "SCALE") {
                 const int s = std::atoi(val.c_str());
                 if (s >= 1 && s <= 10) c.scale = s;
                 else bad();
-            } else if (key == "TELA_CHEIA") {
+            } else if (key == "FULLSCREEN") {
                 if (!parse_bool(val, c.fullscreen)) bad();
             } else bad();
         } else if (section == "AUDIO") {
             if (key == "VOLUME") {
                 c.volume = std::clamp(std::atoi(val.c_str()), 0, 100);
-            } else if (key == "MUDO") { // compatibilidade
+            } else if (key == "MUTE") { // compatibilidade
                 bool m = false;
                 if (!parse_bool(val, m)) bad();
                 else if (m) c.volume = 0;
             } else bad();
-        } else if (section == "TECLADO" || section == "CONTROLE") {
-            const bool kb = section == "TECLADO";
-            if (!kb && key == "ANALOGICO") {
+        } else if (section == "KEYBOARD" || section == "GAMEPAD") {
+            const bool kb = section == "KEYBOARD";
+            if (!kb && key == "ANALOG") {
                 if (!parse_bool(val, c.analog)) bad();
                 continue;
             }
-            if (!kb && key == "ZONA_MORTA") {
+            if (!kb && key == "DEADZONE") {
                 c.deadzone = std::clamp(std::atoi(val.c_str()), 0, 32767);
                 continue;
             }
@@ -157,27 +172,27 @@ void parse(const std::string& text, Config& c, std::vector<std::string>& warn) {
                 if (item.empty()) continue;
                 if (kb) {
                     if (const int vk = parse_key(item)) c.keyboard[b].push_back(vk);
-                    else warn.push_back(where + ": tecla desconhecida '" + item + "'");
+                    else warn.push_back(where + ": unknown key '" + item + "'");
                 } else {
                     if (const uint32_t m = parse_pad(item)) c.pad[b].push_back(m);
-                    else warn.push_back(where + ": botão desconhecido '" + item + "'");
+                    else warn.push_back(where + ": unknown button '" + item + "'");
                 }
             }
-        } else if (section == "ATALHOS") {
+        } else if (section == "SHORTCUTS") {
             const int vk = parse_key(upper(val));
             int* target = key == "MENU" ? &c.key_menu
-                        : key == "SALVAR_ESTADO" ? &c.key_save
-                        : key == "CARREGAR_ESTADO" ? &c.key_load
-                        : key == "SLOT_ANTERIOR" ? &c.key_slot_prev
-                        : key == "PROXIMO_SLOT" ? &c.key_slot_next
+                        : key == "SAVE_STATE" ? &c.key_save
+                        : key == "LOAD_STATE" ? &c.key_load
+                        : key == "PREV_SLOT" ? &c.key_slot_prev
+                        : key == "NEXT_SLOT" ? &c.key_slot_next
                         : key == "TURBO" ? &c.key_turbo
-                        : key == "PAUSA" ? &c.key_pause
-                        : key == "TELA_CHEIA" ? &c.key_fullscreen
-                        : key == "CAPTURA" ? &c.key_screenshot : nullptr;
+                        : key == "PAUSE" ? &c.key_pause
+                        : key == "FULLSCREEN" ? &c.key_fullscreen
+                        : key == "SCREENSHOT" ? &c.key_screenshot : nullptr;
             if (!target || !vk) bad();
             else *target = vk;
         } else {
-            warn.push_back(where + ": fora de uma seção conhecida");
+            warn.push_back(where + ": outside a known section");
         }
     }
 }
@@ -265,42 +280,42 @@ const char* button_name(int b) { return b >= 0 && b < BTN_COUNT ? kButtonNames[b
 
 bool save_config(const std::filesystem::path& path, const Config& c) {
     std::ostringstream o;
-    o << "; tlagba.ini — configuração do Avatar: The Last Airbender Recomp.\n"
-         "; Também editável pela tela de configurações do jogo (Esc, F1 ou o botão Xbox/home).\n"
-         "; Apague este arquivo para voltar aos padrões. Várias teclas por ação: separe por vírgula.\n\n"
-         "[janela]\n"
-      << "escala = " << c.scale << "            ; tamanho da janela (múltiplo de 240×160)\n"
-      << "tela_cheia = " << (c.fullscreen ? "sim" : "nao") << "\n\n"
+    o << "; tlagba.ini — Avatar: The Last Airbender Recomp settings.\n"
+         "; Also editable from the in-game settings screen (Esc, F1 or the Xbox/home button).\n"
+         "; Delete this file to restore the defaults. Several keys per action: separate with commas.\n\n"
+         "[window]\n"
+      << "scale = " << c.scale << "             ; window size (multiple of 240x160)\n"
+      << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n\n"
       << "[audio]\n"
-      << "volume = " << c.volume << "          ; 0–100 (0 = mudo)\n\n"
-      << "[teclado]\n"
-         "; Teclas: A–Z, 0–9, F1–F12, UP, DOWN, LEFT, RIGHT, ENTER, BACKSPACE, SPACE, TAB, ESC,\n"
-         ";         SHIFT, CTRL, INSERT, DELETE, HOME, END, PAGEUP, PAGEDOWN, NUMPAD0–NUMPAD9\n";
+      << "volume = " << c.volume << "          ; 0-100 (0 = muted)\n\n"
+      << "[keyboard]\n"
+         "; Keys: A-Z, 0-9, F1-F12, UP, DOWN, LEFT, RIGHT, ENTER, BACKSPACE, SPACE, TAB, ESC,\n"
+         ";       SHIFT, CTRL, INSERT, DELETE, HOME, END, PAGEUP, PAGEDOWN, NUMPAD0-NUMPAD9\n";
     const int order[BTN_COUNT] = {BTN_A, BTN_B, BTN_L, BTN_R, BTN_START, BTN_SELECT, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT};
     char line[160];
     for (int b : order) {
         std::snprintf(line, sizeof line, "%-6s = %s\n", kButtonNames[b], join_keys(c.keyboard[b]).c_str());
         o << line;
     }
-    o << "\n[controle]\n"
-         "; Botões (XInput, primeiro controle conectado): A, B, X, Y, LB, RB, LT, RT, BACK, START,\n"
-         ";   LS, RS (clique dos analógicos), DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT\n";
+    o << "\n[gamepad]\n"
+         "; Buttons (XInput, first connected gamepad): A, B, X, Y, LB, RB, LT, RT, BACK, START,\n"
+         ";   LS, RS (stick clicks), DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT\n";
     for (int b : order) {
         std::snprintf(line, sizeof line, "%-6s = %s\n", kButtonNames[b], join_pad(c.pad[b]).c_str());
         o << line;
     }
-    o << "analogico = " << (c.analog ? "sim" : "nao") << "       ; analógico esquerdo também move\n"
-      << "zona_morta = " << c.deadzone << "     ; 0–32767\n\n"
-      << "[atalhos]\n"
-      << "menu            = " << key_name(c.key_menu) << "   ; tela de configurações (Esc e o botão Xbox/home também)\n"
-      << "salvar_estado   = " << key_name(c.key_save) << "\n"
-      << "carregar_estado = " << key_name(c.key_load) << "\n"
-      << "slot_anterior   = " << key_name(c.key_slot_prev) << "\n"
-      << "proximo_slot    = " << key_name(c.key_slot_next) << "\n"
-      << "turbo           = " << key_name(c.key_turbo) << "   ; segure para acelerar\n"
-      << "pausa           = " << key_name(c.key_pause) << "\n"
-      << "tela_cheia      = " << key_name(c.key_fullscreen) << "   ; Alt+Enter também funciona\n"
-      << "captura         = " << key_name(c.key_screenshot) << "   ; salva PNG em screenshots\\\n";
+    o << "analog = " << (c.analog ? "yes" : "no") << "         ; the left stick also moves\n"
+      << "deadzone = " << c.deadzone << "     ; 0-32767\n\n"
+      << "[shortcuts]\n"
+      << "menu       = " << key_name(c.key_menu) << "   ; settings screen (Esc and the Xbox/home button too)\n"
+      << "save_state = " << key_name(c.key_save) << "\n"
+      << "load_state = " << key_name(c.key_load) << "\n"
+      << "prev_slot  = " << key_name(c.key_slot_prev) << "\n"
+      << "next_slot  = " << key_name(c.key_slot_next) << "\n"
+      << "turbo      = " << key_name(c.key_turbo) << "   ; hold to fast-forward\n"
+      << "pause      = " << key_name(c.key_pause) << "\n"
+      << "fullscreen = " << key_name(c.key_fullscreen) << "   ; Alt+Enter works too\n"
+      << "screenshot = " << key_name(c.key_screenshot) << "   ; saves a PNG to screenshots\\\n";
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     f << o.str();

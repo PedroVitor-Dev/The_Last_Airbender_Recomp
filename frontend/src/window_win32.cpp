@@ -246,7 +246,7 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
     const fs::path ini = exe_dir() / "tlagba.ini";
     std::vector<std::string> warnings;
     Config cfg = load_config(ini, warnings);
-    for (const auto& w : warnings) std::fprintf(stderr, "aviso: %s\n", w.c_str());
+    for (const auto& w : warnings) std::fprintf(stderr, "warning: %s\n", w.c_str());
 
     int slot = 1;
     SettingsMenu menu(cfg, slot);
@@ -296,7 +296,7 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
         status = widen(s);
         status_until = clock::now() + std::chrono::seconds(3);
     };
-    say(std::string(key_name(cfg.key_menu)) + ", Esc ou botão Xbox/home: configurações");
+    say(std::string(key_name(cfg.key_menu)) + ", Esc or Xbox/home button: settings");
 
     auto pump = [&] {
         MSG msg;
@@ -306,27 +306,27 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
         }
     };
     auto current_status = [&]() -> std::wstring {
-        if (ws.paused) return L"Pausado (" + widen(key_name(cfg.key_pause)) + L" continua)";
+        if (ws.paused) return L"Paused (" + widen(key_name(cfg.key_pause)) + L" resumes)";
         return clock::now() < status_until ? status : std::wstring();
     };
 
     auto persist_config = [&] {
         if (!menu.config_dirty()) return;
         menu.clear_dirty();
-        if (!save_config(ini, cfg)) std::fprintf(stderr, "aviso: não foi possível gravar %s\n", ini.string().c_str());
+        if (!save_config(ini, cfg)) std::fprintf(stderr, "warning: could not write %s\n", ini.string().c_str());
     };
 
     auto load_slot = [&](int s) {
         std::vector<uint8_t> bytes;
         if (!read_file(slot_path(s), bytes)) {
-            say("Slot " + std::to_string(s) + " vazio");
+            say("Slot " + std::to_string(s) + " is empty");
             return false;
         }
         try {
-            say("Estado carregado do slot " + std::to_string(s));
+            say("State loaded from slot " + std::to_string(s));
             g.load_state_and_restart(bytes); // não retorna: recomeça a partir do estado
         } catch (const std::runtime_error& e) {
-            say(std::string("Não foi possível carregar: ") + e.what());
+            say(std::string("Could not load: ") + e.what());
         }
         return false;
     };
@@ -342,19 +342,19 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
         if (ws.slot_delta) {
             slot = ((slot + ws.slot_delta) % 10 + 10) % 10;
             ws.slot_delta = 0;
-            say("Slot " + std::to_string(slot) + (fs::exists(slot_path(slot)) ? "" : " (vazio)"));
+            say("Slot " + std::to_string(slot) + (fs::exists(slot_path(slot)) ? "" : " (empty)"));
         }
         if (ws.req_shot) {
             ws.req_shot = false;
             const fs::path p = rom_dir / "screenshots" / (stem + "_" + timestamp() + ".png");
             fs::create_directories(p.parent_path());
             say(png::write_rgb(p.string(), g.frame().data(), gba::kScreenW, gba::kScreenH)
-                    ? "Captura salva: " + p.filename().string()
-                    : "Falha ao salvar a captura");
+                    ? "Screenshot saved: " + p.filename().string()
+                    : "Could not save the screenshot");
         }
         if (ws.req_save) {
             ws.req_save = false;
-            say(save_slot(slot) ? "Estado salvo no slot " + std::to_string(slot) : "Falha ao salvar o estado");
+            say(save_slot(slot) ? "State saved to slot " + std::to_string(slot) : "Could not save the state");
         }
         if (ws.req_load) {
             ws.req_load = false;
@@ -410,12 +410,12 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
             case A::Resume: close(); return;
             case A::Quit: close(); ws.quit = true; return;
             case A::SaveState:
-                menu.set_status(save_slot(slot) ? "Estado salvo no slot " + std::to_string(slot)
-                                                : "Falha ao salvar o estado");
+                menu.set_status(save_slot(slot) ? "State saved to slot " + std::to_string(slot)
+                                                : "Could not save the state");
                 break;
             case A::LoadState:
                 if (!fs::exists(slot_path(slot))) {
-                    menu.set_status("Slot " + std::to_string(slot) + " vazio");
+                    menu.set_status("Slot " + std::to_string(slot) + " is empty");
                     break;
                 }
                 close();
@@ -494,9 +494,9 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
 
     timeEndPeriod(1);
     const double secs = std::chrono::duration<double>(clock::now() - started).count();
-    std::printf("%llu quadros em %.2f s (%.2f fps, alvo 59,73)%s, modo %s\n",
+    std::printf("%llu frames in %.2f s (%.2f fps, target 59.73)%s, %s mode\n",
                 static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
-                audio ? ", ritmo pelo áudio" : "", g.has_recomp() ? "recompilado" : "interpretador");
+                audio ? ", paced by audio" : "", g.has_recomp() ? "recompiled" : "interpreter");
     persist_config();
     g_ws = nullptr;
     ReleaseDC(ws.hwnd, dc);

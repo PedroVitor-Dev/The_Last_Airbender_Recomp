@@ -25,8 +25,8 @@ constexpr int kRowsTop = 58, kRowH = 20;
 
 // Ordem dos botões nas páginas de remapeamento.
 constexpr int kButtonOrder[BTN_COUNT] = {BTN_A, BTN_B, BTN_L, BTN_R, BTN_START, BTN_SELECT, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT};
-const wchar_t* kButtonLabel[BTN_COUNT] = {L"Botão A", L"Botão B", L"Select", L"Start", L"Direita", L"Esquerda",
-                                           L"Cima", L"Baixo", L"Botão R", L"Botão L"};
+const wchar_t* kButtonLabel[BTN_COUNT] = {L"A Button", L"B Button", L"Select", L"Start", L"Right", L"Left",
+                                           L"Up", L"Down", L"R Button", L"L Button"};
 
 enum MainRow { M_RESUME, M_SAVE, M_LOAD, M_FULLSCREEN, M_SCALE, M_VOLUME, M_ANALOG, M_KEYBOARD, M_PAD, M_DEFAULTS, M_QUIT, M_COUNT };
 
@@ -114,17 +114,17 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
     std::vector<Row> r;
     if (page_ == Page::Main) {
         const std::wstring slot = L"Slot " + std::to_wstring(slot_);
-        r.push_back({L"Continuar", L"", false});
-        r.push_back({L"Salvar estado", slot, true});
-        r.push_back({L"Carregar estado", slot + (slot_exists_ ? L"" : L" (vazio)"), true});
-        r.push_back({L"Tela cheia", fullscreen_ ? L"Sim" : L"Não", true});
-        r.push_back({L"Tamanho da janela", std::to_wstring(cfg_.scale) + L"×", true});
-        r.push_back({L"Volume", cfg_.volume == 0 ? L"Mudo" : std::to_wstring(cfg_.volume) + L"%", true});
-        r.push_back({L"Analógico do controle", cfg_.analog ? L"Sim" : L"Não", true});
-        r.push_back({L"Teclado", L"›", false});
-        r.push_back({L"Controle", L"›", false});
-        r.push_back({L"Restaurar padrões", L"", false});
-        r.push_back({L"Sair do jogo", L"", false});
+        r.push_back({L"Resume", L"", false});
+        r.push_back({L"Save state", slot, true});
+        r.push_back({L"Load state", slot + (slot_exists_ ? L"" : L" (empty)"), true});
+        r.push_back({L"Fullscreen", fullscreen_ ? L"On" : L"Off", true});
+        r.push_back({L"Window size", std::to_wstring(cfg_.scale) + L"×", true});
+        r.push_back({L"Volume", cfg_.volume == 0 ? L"Muted" : std::to_wstring(cfg_.volume) + L"%", true});
+        r.push_back({L"Analog stick", cfg_.analog ? L"On" : L"Off", true});
+        r.push_back({L"Keyboard", L"›", false});
+        r.push_back({L"Gamepad", L"›", false});
+        r.push_back({L"Restore defaults", L"", false});
+        r.push_back({L"Quit game", L"", false});
         return r;
     }
     const bool kb = page_ == Page::Keyboard;
@@ -132,7 +132,7 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
         const int b = kButtonOrder[i];
         std::wstring v;
         if ((capture_ != Capture::None) && capture_button_ == b) {
-            v = kb ? L"Pressione uma tecla…" : L"Pressione um botão…";
+            v = kb ? L"Press a key…" : L"Press a button…";
         } else if (kb) {
             for (int k : cfg_.keyboard[b]) v += (v.empty() ? L"" : L", ") + widen(key_name(k));
         } else {
@@ -140,7 +140,7 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
         }
         r.push_back({kButtonLabel[b], v.empty() ? L"—" : v, false});
     }
-    r.push_back({L"Voltar", L"", false});
+    r.push_back({L"Back", L"", false});
     return r;
 }
 
@@ -181,7 +181,7 @@ void SettingsMenu::activate(int row) {
             cfg_.fullscreen = fs;
             dirty_ = true;
             action_ = Action::ApplyScale;
-            set_status("Padrões restaurados");
+            set_status("Defaults restored");
             break;
         }
         case M_QUIT: action_ = Action::Quit; break;
@@ -221,7 +221,7 @@ void SettingsMenu::captured_key(int vk) {
     capture_ = Capture::None;
     if (vk == VK_ESCAPE) return; // cancelar
     if (vk == cfg_.key_menu) {
-        set_status(std::string("Essa tecla abre o menu (") + key_name(vk) + ")");
+        set_status(std::string("That key opens the menu (") + key_name(vk) + ")");
         return;
     }
     for (auto& v : cfg_.keyboard) v.erase(std::remove(v.begin(), v.end(), vk), v.end()); // tira de outro botão
@@ -261,7 +261,7 @@ const uint32_t* SettingsMenu::render(const uint32_t* frozen) {
     // Faixa do título com o detalhe vermelho embaixo.
     fill(dc_, kPanelL + 7, kPanelT + 7, kPanelR - 7, kPanelT + 37, kBrown);
     fill(dc_, kPanelL + 7, kPanelT + 37, kPanelR - 7, kPanelT + 39, kRed);
-    const std::wstring title = page_ == Page::Main ? L"CONFIGURAÇÕES" : page_ == Page::Keyboard ? L"TECLADO" : L"CONTROLE";
+    const std::wstring title = page_ == Page::Main ? L"SETTINGS" : page_ == Page::Keyboard ? L"KEYBOARD" : L"GAMEPAD";
     text(dc_, font_title_, RGB(0, 0, 0), kW / 2 + 2, kPanelT + 12, title, TA_CENTER);
     text(dc_, font_title_, kCream, kW / 2, kPanelT + 10, title, TA_CENTER);
 
@@ -283,9 +283,9 @@ const uint32_t* SettingsMenu::render(const uint32_t* frozen) {
     // Rodapé: mensagem de status ou dicas.
     std::wstring foot;
     if (status_until_ && GetTickCount() < status_until_) foot = status_;
-    else if (capture_ == Capture::Key) foot = L"Pressione a nova tecla   ·   Esc cancela";
-    else if (capture_ == Capture::Pad) foot = L"Pressione o novo botão   ·   botão Xbox/home ou Esc cancela";
-    else foot = L"↑↓ escolher   ·   ←→ alterar   ·   Enter/A confirmar   ·   Esc/B voltar";
+    else if (capture_ == Capture::Key) foot = L"Press the new key   ·   Esc cancels";
+    else if (capture_ == Capture::Pad) foot = L"Press the new button   ·   Xbox/home button or Esc cancels";
+    else foot = L"↑↓ select   ·   ←→ change   ·   Enter/A confirm   ·   Esc/B back";
     fill(dc_, kPanelL + 7, kPanelB - 28, kPanelR - 7, kPanelB - 27, kBorderMid);
     text(dc_, font_small_, kBorderDark, kW / 2, kPanelB - 22, foot, TA_CENTER);
 

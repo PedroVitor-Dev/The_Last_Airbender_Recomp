@@ -168,15 +168,15 @@ void Gba::apply_state(const std::vector<uint8_t>& bytes) {
     StateReader r(bytes.data(), bytes.size());
     char magic[sizeof kStateMagic];
     r.get_bytes(magic, sizeof magic);
-    if (std::memcmp(magic, kStateMagic, sizeof magic) != 0) throw std::runtime_error("não é um save state");
+    if (std::memcmp(magic, kStateMagic, sizeof magic) != 0) throw std::runtime_error("not a save state");
     uint32_t version = 0;
     r.get(version);
     if (version != kStateVersion)
-        throw std::runtime_error("save state de outra versão (" + std::to_string(version) + ", esperado " +
+        throw std::runtime_error("save state from another version (" + std::to_string(version) + ", expected " +
                                  std::to_string(kStateVersion) + ")");
     char sha[40];
     r.get_bytes(sha, sizeof sha);
-    if (std::string(sha, sizeof sha) != rom_sha1_) throw std::runtime_error("save state de outra ROM");
+    if (std::string(sha, sizeof sha) != rom_sha1_) throw std::runtime_error("save state from another ROM");
 
     r.get(frame_count);
     r.get(cycles);
@@ -197,7 +197,7 @@ void Gba::apply_state(const std::vector<uint8_t>& bytes) {
     io.load(r);
     ppu.load(r);
     apu.load(r);
-    if (!r.at_end()) throw std::runtime_error("save state corrompido (bytes sobrando)");
+    if (!r.at_end()) throw std::runtime_error("corrupted save state (trailing bytes)");
     frame_done_ = false; // o quadro salvo já foi entregue ao frontend
     cycle_limit = UINT64_MAX;
 }
