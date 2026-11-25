@@ -39,9 +39,10 @@ const wchar_t* kButtonLabel[BTN_COUNT] = {L"A Button", L"B Button", L"Select", L
                                            L"Up", L"Down", L"R Button", L"L Button"};
 
 enum MainRow {
-    M_RESUME, M_SAVE, M_LOAD, M_FULLSCREEN, M_SCALE, M_VOLUME, M_ANALOG, M_LAUNCHER, M_KEYBOARD, M_PAD,
-    M_DEFAULTS, M_QUIT, M_COUNT
+    M_RESUME, M_SAVE, M_LOAD, M_VIDEO, M_VOLUME, M_ANALOG, M_LAUNCHER, M_KEYBOARD, M_PAD, M_DEFAULTS, M_QUIT,
+    M_COUNT
 };
+enum VideoRow { V_FULLSCREEN, V_SCALE, V_FPS, V_VSYNC, V_BACK, V_COUNT };
 
 std::wstring widen(const char* s) {
     std::wstring w;
@@ -200,7 +201,8 @@ std::vector<int> SettingsMenu::main_ids() const {
 }
 
 int SettingsMenu::row_count() const {
-    return page_ == Page::Main ? static_cast<int>(main_ids().size()) : BTN_COUNT + 1;
+    if (page_ == Page::Main) return static_cast<int>(main_ids().size());
+    return page_ == Page::Video ? V_COUNT : BTN_COUNT + 1;
 }
 
 std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
@@ -212,8 +214,7 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
             case M_RESUME: r.push_back({L"Resume", L"", false}); break;
             case M_SAVE: r.push_back({L"Save state", slot, true}); break;
             case M_LOAD: r.push_back({L"Load state", slot + (slot_exists_ ? L"" : L" (empty)"), true}); break;
-            case M_FULLSCREEN: r.push_back({L"Fullscreen", fullscreen_ ? L"On" : L"Off", true}); break;
-            case M_SCALE: r.push_back({L"Window size", std::to_wstring(cfg_.scale) + L"×", true}); break;
+            case M_VIDEO: r.push_back({L"Video", L"›", false}); break;
             case M_VOLUME:
                 r.push_back({L"Volume", cfg_.volume == 0 ? L"Muted" : std::to_wstring(cfg_.volume) + L"%", true});
                 break;
@@ -226,6 +227,17 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
             default: break;
             }
         }
+        return r;
+    }
+    if (page_ == Page::Video) {
+        r.push_back({L"Fullscreen", fullscreen_ ? L"On" : L"Off", true});
+        r.push_back({L"Window size", std::to_wstring(cfg_.scale) + L"×", true});
+        r.push_back({L"Frame rate", cfg_.fps60 ? L"60 fps" : L"59.73 fps (original)", true});
+        std::wstring vs = cfg_.vsync ? L"On" : L"Off";
+        if (cfg_.vsync && !vsync_locked_ && display_hz_ > 0)
+            vs = L"On (n/a at " + std::to_wstring(static_cast<int>(display_hz_ + 0.5)) + L" Hz)";
+        r.push_back({L"V-Sync", vs, true});
+        r.push_back({L"Back", L"", false});
         return r;
     }
     const bool kb = page_ == Page::Keyboard;
@@ -246,16 +258,24 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
 }
 
 void SettingsMenu::adjust(int row, int dir) {
+    if (page_ == Page::Video) {
+        switch (row) {
+        case V_FULLSCREEN: action_ = Action::ToggleFullscreen; break;
+        case V_SCALE: {
+            const int s = std::clamp(cfg_.scale + dir, 1, 8);
+            if (s != cfg_.scale) cfg_.scale = s, dirty_ = true, action_ = Action::ApplyScale;
+            break;
+        }
+        case V_FPS: cfg_.fps60 = !cfg_.fps60, dirty_ = true; break;
+        case V_VSYNC: cfg_.vsync = !cfg_.vsync, dirty_ = true; break;
+        default: break;
+        }
+        return;
+    }
     if (page_ != Page::Main) return;
     switch (main_ids()[static_cast<size_t>(row)]) {
     case M_SAVE:
     case M_LOAD: slot_ = ((slot_ + dir) % 10 + 10) % 10; break;
-    case M_FULLSCREEN: action_ = Action::ToggleFullscreen; break;
-    case M_SCALE: {
-        const int s = std::clamp(cfg_.scale + dir, 1, 8);
-        if (s != cfg_.scale) cfg_.scale = s, dirty_ = true, action_ = Action::ApplyScale;
-        break;
-    }
     case M_VOLUME: {
         const int v = std::clamp(cfg_.volume + dir * 10, 0, 100);
         if (v != cfg_.volume) cfg_.volume = v, dirty_ = true, action_ = Action::ApplyVolume;
@@ -273,8 +293,8 @@ void SettingsMenu::activate(int row) {
         case M_RESUME: action_ = Action::Resume; break;
         case M_SAVE: action_ = Action::SaveState; break;
         case M_LOAD: action_ = Action::LoadState; break;
-        case M_FULLSCREEN: action_ = Action::ToggleFullscreen; break;
-        case M_SCALE: case M_VOLUME: case M_ANALOG: case M_LAUNCHER: adjust(row, +1); break;
+        case M_VIDEO: sel_main_ = row, page_ = Page::Video, sel_ = 0; break;
+        case M_VOLUME: case M_ANALOG: case M_LAUNCHER: adjust(row, +1); break;
         case M_KEYBOARD: sel_main_ = row, page_ = Page::Keyboard, sel_ = 0; break;
         case M_PAD: sel_main_ = row, page_ = Page::Pad, sel_ = 0; break;
         case M_DEFAULTS: {
@@ -290,6 +310,11 @@ void SettingsMenu::activate(int row) {
         case M_QUIT: action_ = in_game_ ? Action::Quit : Action::Resume; break;
         default: break;
         }
+        return;
+    }
+    if (page_ == Page::Video) {
+        if (row == V_BACK) page_ = Page::Main, sel_ = sel_main_;
+        else adjust(row, +1);
         return;
     }
     if (row == BTN_COUNT) { // Back
@@ -369,7 +394,10 @@ const uint32_t* SettingsMenu::draw_panel() {
     // Faixa do título com o detalhe vermelho embaixo.
     fill(dc_, kPanelL + 7, kPanelT + 7, kPanelR - 7, kPanelT + 37, kBrown);
     fill(dc_, kPanelL + 7, kPanelT + 37, kPanelR - 7, kPanelT + 39, kRed);
-    const std::wstring title = page_ == Page::Main ? L"SETTINGS" : page_ == Page::Keyboard ? L"KEYBOARD" : L"GAMEPAD";
+    const std::wstring title = page_ == Page::Main       ? L"SETTINGS"
+                               : page_ == Page::Video    ? L"VIDEO"
+                               : page_ == Page::Keyboard ? L"KEYBOARD"
+                                                         : L"GAMEPAD";
     text(dc_, font_title_, RGB(0, 0, 0), kW / 2 + 2, kPanelT + 12, title, TA_CENTER);
     text(dc_, font_title_, kCream, kW / 2, kPanelT + 10, title, TA_CENTER);
 

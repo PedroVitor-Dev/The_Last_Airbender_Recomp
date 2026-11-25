@@ -22,6 +22,8 @@ constexpr uint32_t PAD_LS_UP = 0x40000, PAD_LS_DOWN = 0x80000, PAD_LS_LEFT = 0x1
 struct Config {
     int scale = 3;
     bool fullscreen = false;
+    bool vsync = true;    // quadros no ritmo da tela (sem tremidas)
+    bool fps60 = true;    // 60 fps cravados; false = 59,73 fps do GBA original
     bool launcher = true; // AvatarRecomp.exe abre no launcher (false: direto no jogo)
     int volume = 100; // 0–100 (0 = mudo)
     std::array<std::vector<int>, BTN_COUNT> keyboard;    // códigos de tecla (VK) por botão

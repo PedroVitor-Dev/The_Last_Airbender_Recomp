@@ -44,7 +44,8 @@ interpreter show **0 divergences**.
 | 🛠️ **Settings screen** | Styled after the game itself. The game freezes while it is open |
 | 💾 **Save states** | 10 slots, transactional loading (a bad state never corrupts your game) |
 | 🖥️ **Made for PC** | Borderless fullscreen, crisp pixels at the correct aspect ratio, turbo, pause, PNG screenshots |
-| 🔊 **Faithful sound** | FIFOs + 4 PSG channels at 48 kHz via XAudio2. Audio drives the clock, so 60 fps stays steady |
+| 🎞️ **Smooth 60 fps** | V-Sync on 60/120/240 Hz monitors, a precise timer elsewhere; 60 fps or the original 59.73 |
+| 🔊 **Faithful sound** | FIFOs + 4 PSG channels at 48 kHz via XAudio2, following the picture with dynamic rate control |
 | 🧪 **Verified** | Differential tests, an instruction fuzzer, mutation testing and reference frames |
 
 <div align="center">
@@ -116,7 +117,8 @@ Open it with **Esc**, **F1**, the gamepad's **Xbox/home** button or **Back+Start
 freezes while it is open. In it you can:
 
 - resume, save and load states (10 slots), quit the game;
-- toggle fullscreen, change the window size (1×–8×) and the volume;
+- video: fullscreen, window size (1×–8×), frame rate (60 or the original 59.73) and V-Sync;
+- change the volume;
 - use the analog stick as a D-pad;
 - remap the keyboard and the gamepad (pick a button, then press the new key);
 - restore the defaults.

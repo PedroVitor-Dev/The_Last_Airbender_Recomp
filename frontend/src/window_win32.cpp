@@ -6,7 +6,9 @@
 
 #ifdef _WIN32
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -27,6 +29,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
+#include <dwmapi.h>
 #include <timeapi.h>
 
 #ifndef TLA_VERSION
@@ -279,6 +282,126 @@ void pad_nav(Target& t, PadRepeat& rep, uint32_t raw, uint32_t pressed) {
     if (pressed & kPadB) t.nav(Nav::Back);
 }
 
+// ─────────────────────────────────────────────────────── ritmo de quadros ──
+//
+// Com V-Sync, cada quadro é mostrado numa atualização do monitor (DwmFlush espera a próxima
+// composição do Windows): a 60 Hz o jogo roda a 60 fps exatos, sem quadros irregulares; a 120/240 Hz
+// cada quadro fica 2/4 atualizações. Sem V-Sync (ou com o monitor numa taxa que não é múltipla,
+// como 144 Hz), um relógio de alta resolução segura 60 fps (ou os 59,73 do GBA original).
+// O áudio deixa de ser o relógio: segue a imagem com um ajuste de velocidade imperceptível (<1%).
+struct FramePacer {
+    double fps = 60.0;
+    int flushes = 0; // >0: V-Sync, esperando esse número de composições por quadro
+    clock::time_point next{}, last{};
+    uint64_t shown = 0, late = 0; // diagnóstico: quadros mostrados e intervalos > 1,5 quadro
+
+    static double refresh_rate(HWND hwnd) {
+        DWM_TIMING_INFO ti{};
+        ti.cbSize = sizeof ti;
+        if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator &&
+            ti.rateRefresh.uiNumerator)
+            return static_cast<double>(ti.rateRefresh.uiNumerator) / ti.rateRefresh.uiDenominator;
+        MONITORINFOEXW mi{};
+        mi.cbSize = sizeof mi;
+        DEVMODEW dm{};
+        dm.dmSize = sizeof dm;
+        if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi) &&
+            EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1)
+            return dm.dmDisplayFrequency;
+        return 0;
+    }
+
+    void configure(HWND hwnd, const Config& cfg) {
+        const double target = cfg.fps60 ? 60.0 : 59.7275;
+        fps = target;
+        flushes = 0;
+        BOOL composited = FALSE;
+        const double hz = refresh_rate(hwnd);
+        if (cfg.vsync && hz > 0 && SUCCEEDED(DwmIsCompositionEnabled(&composited)) && composited) {
+            const int n = std::max(1, static_cast<int>(hz / target + 0.5));
+            // 60 fps aceita 59,94/60 Hz (e múltiplos); o ritmo original só um monitor a ~59,73 Hz.
+            const double tolerance = cfg.fps60 ? 1.0 : 0.05;
+            if (std::abs(hz / n - target) < tolerance) flushes = n, fps = hz / n;
+        }
+    }
+
+    void reset() { next = last = clock::now(), skip_stat = true; }
+    bool skip_stat = true;
+
+    void count(clock::time_point prev, clock::duration period) {
+        if (!skip_stat) {
+            ++shown;
+            if (clock::now() - prev > period * 3 / 2) ++late;
+        }
+        skip_stat = false;
+    }
+
+    void wait() {
+        const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
+        const auto prev = last;
+        if (flushes) {
+            for (int i = 0; i < flushes; ++i) DwmFlush();
+            // Janela minimizada ou coberta: o DWM não espera. Cai no relógio para não disparar.
+            if (clock::now() - last < period / 2) {
+                next = last + period;
+                sleep_until(next);
+            }
+            last = next = clock::now();
+            count(prev, period);
+            return;
+        }
+        next += period;
+        const auto now = clock::now();
+        if (next > now) sleep_until(next);
+        else if (now - next > period * 5) next = now; // muito atrasado (ex.: arrastando a janela)
+        last = clock::now();
+        count(prev, period);
+    }
+
+    static void sleep_until(clock::time_point t) {
+        // Sleep até ~1 ms antes e o resto em espera ativa curta: precisão de microssegundos.
+        for (;;) {
+            const auto left = t - clock::now();
+            if (left <= clock::duration::zero()) return;
+            if (left > std::chrono::milliseconds(2))
+                Sleep(static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(left).count() - 1));
+            else
+                YieldProcessor();
+        }
+    }
+};
+
+// Áudio acompanhando a imagem: cada quadro gera ~803,6 amostras (48 kHz / 59,7275); elas são
+// reamostradas para durar exatamente um quadro mostrado, com uma correção de até ±0,5% conforme a
+// fila do XAudio2 (alvo: 3 buffers). Fila vazia: completa com silêncio; fila cheia demais: descarta.
+void submit_audio(AudioOut& out, const std::vector<int16_t>& in, double fps, int volume, std::vector<int16_t>& buf) {
+    const size_t in_frames = in.size() / 2;
+    if (!in_frames) return;
+    uint32_t q = out.queued();
+    if (q > 8) return;
+    const double per_frame = gba::Apu::kSampleRate / fps;
+    if (q == 0) { // começo ou depois de uma parada: dois quadros de folga
+        buf.assign(static_cast<size_t>(per_frame) * 4, 0);
+        out.submit(buf);
+        q = 2;
+    }
+    const double adjust = std::clamp(1.0 + 0.0025 * (3.0 - static_cast<double>(q)), 0.995, 1.005);
+    const size_t out_frames = std::max<size_t>(1, static_cast<size_t>(per_frame * adjust + 0.5));
+    buf.resize(out_frames * 2);
+    const double step = static_cast<double>(in_frames) / static_cast<double>(out_frames);
+    for (size_t i = 0; i < out_frames; ++i) {
+        const double pos = i * step;
+        const size_t a = std::min(static_cast<size_t>(pos), in_frames - 1);
+        const size_t b = std::min(a + 1, in_frames - 1);
+        const double f = pos - static_cast<double>(a);
+        for (int ch = 0; ch < 2; ++ch) {
+            const double s = in[a * 2 + ch] * (1.0 - f) + in[b * 2 + ch] * f;
+            buf[i * 2 + ch] = static_cast<int16_t>(std::clamp(s * volume / 100.0, -32768.0, 32767.0));
+        }
+    }
+    out.submit(buf);
+}
+
 bool rom_ok(const fs::path& p) {
     std::error_code ec;
     if (p.empty() || !fs::is_regular_file(p, ec)) return false;
@@ -450,6 +573,11 @@ struct Session {
 
             menu.set_fullscreen_flag(ws.fullscreen);
             if (g) menu.set_slot_exists(slot_exists(slot));
+            {
+                FramePacer probe;
+                probe.configure(ws.hwnd, cfg);
+                menu.set_display(FramePacer::refresh_rate(ws.hwnd), probe.flushes > 0);
+            }
             draw(dc, ws.hwnd, g ? menu.render(frozen.data()) : menu.render_over(background), menu.bitmap_info(), {});
             Sleep(15);
         }
@@ -488,12 +616,12 @@ struct Session {
             return write_file(p, g.save_state());
         };
 
-        // O áudio continua ativo mesmo com volume 0: ele é o relógio do laço de quadros.
         auto audio = o.mute ? nullptr : AudioOut::create(gba::Apu::kSampleRate);
-        const auto frame_time = std::chrono::nanoseconds(16742706); // 59,7275 Hz
+        FramePacer pacer;
+        pacer.configure(ws.hwnd, cfg);
+        pacer.reset();
         const auto started = clock::now();
         const uint64_t first_frame = g.frame_count;
-        auto next = started;
         const uint64_t max_frames = o.frames_given ? o.frames : 0;
 
         std::wstring status;
@@ -559,7 +687,8 @@ struct Session {
             if (ws.req_menu) {
                 using A = SettingsMenu::Action;
                 const A a = run_settings(&g, nullptr, save_slot, slot_exists);
-                next = clock::now();
+                pacer.configure(ws.hwnd, cfg); // V-Sync / taxa podem ter mudado
+                pacer.reset();
                 if (a == A::Quit) {
                     if (app) ws.leave = true;
                     else ws.quit = true;
@@ -577,7 +706,7 @@ struct Session {
                 pump();
                 handle_requests();
                 draw(dc, ws.hwnd, g.frame().data(), bmi, current_status());
-                next = clock::now();
+                pacer.reset();
             }
             if (ws.quit) return false;
 
@@ -585,24 +714,11 @@ struct Session {
             auto samples = g.apu.take_samples();
             const bool turbo = cfg.key_turbo && ws.down[cfg.key_turbo];
             if (turbo) {
-                next = clock::now(); // sem limite de velocidade; o áudio acelerado é descartado
-            } else if (audio) {
-                if (cfg.volume < 100) {
-                    scaled.resize(samples.size());
-                    const int v = cfg.volume;
-                    for (size_t i = 0; i < samples.size(); ++i) scaled[i] = static_cast<int16_t>(samples[i] * v / 100);
-                    audio->submit(scaled);
-                } else {
-                    audio->submit(samples);
-                }
-                while (audio->queued() > 3) Sleep(1); // áudio como relógio: ~3 quadros na fila
+                pacer.reset(); // sem limite de velocidade; o áudio acelerado é descartado
             } else {
-                next += frame_time;
-                const auto now = clock::now();
-                if (next > now)
-                    Sleep(static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(next - now).count()));
-                else if (now - next > frame_time * 5)
-                    next = now;
+                if (audio) submit_audio(*audio, samples, pacer.fps, cfg.volume, scaled);
+                if (g.frame_count % 120 == 0) pacer.configure(ws.hwnd, cfg); // mudou de monitor?
+                pacer.wait();
             }
             g.set_keys(static_cast<uint16_t>(keyboard_keys(ws) | pad_to_gba(cfg, raw & ~pad_suppress)));
             return !max_frames || g.frame_count < max_frames;
@@ -610,9 +726,11 @@ struct Session {
 
         const double secs = std::chrono::duration<double>(clock::now() - started).count();
         const uint64_t frames = g.frame_count - first_frame;
-        std::printf("%llu frames in %.2f s (%.2f fps, target 59.73)%s, %s mode\n",
-                    static_cast<unsigned long long>(frames), secs, frames / secs, audio ? ", paced by audio" : "",
-                    g.has_recomp() ? "recompiled" : "interpreter");
+        std::printf("%llu frames in %.2f s (%.2f fps, target %.2f%s), %s mode\n",
+                    static_cast<unsigned long long>(frames), secs, frames / secs, pacer.fps,
+                    pacer.flushes ? ", V-Sync" : "", g.has_recomp() ? "recompiled" : "interpreter");
+        std::printf("late frames (> 1.5 frame interval): %llu of %llu\n", static_cast<unsigned long long>(pacer.late),
+                    static_cast<unsigned long long>(pacer.shown));
         store_save(g, save_path);
         return ws.quit;
     }

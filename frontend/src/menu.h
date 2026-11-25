@@ -67,6 +67,8 @@ public:
     void set_status(const std::string& s);
     void set_fullscreen_flag(bool on) { fullscreen_ = on; }
     void set_slot_exists(bool exists) { slot_exists_ = exists; }
+    // Taxa do monitor e se o V-Sync conseguiu travar nela (para mostrar na página Video).
+    void set_display(double hz, bool vsync_locked) { display_hz_ = hz, vsync_locked_ = vsync_locked; }
     bool config_dirty() const { return dirty_; }
     void clear_dirty() { dirty_ = false; }
 
@@ -75,7 +77,7 @@ public:
     const uint32_t* render_over(const uint32_t* image);
 
 private:
-    enum class Page { Main, Keyboard, Pad };
+    enum class Page { Main, Video, Keyboard, Pad };
     enum class Capture { None, Key, Pad };
 
     struct Row {
@@ -102,6 +104,8 @@ private:
     int capture_button_ = 0;
     Action action_ = Action::None;
     bool fullscreen_ = false, slot_exists_ = false, dirty_ = false;
+    double display_hz_ = 0;
+    bool vsync_locked_ = true;
     std::wstring status_;
     DWORD status_until_ = 0;
 };

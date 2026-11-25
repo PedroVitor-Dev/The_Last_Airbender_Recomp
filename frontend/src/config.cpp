@@ -136,6 +136,13 @@ void parse(const std::string& text, Config& c, std::vector<std::string>& warn) {
                 else bad();
             } else if (key == "FULLSCREEN") {
                 if (!parse_bool(val, c.fullscreen)) bad();
+            } else if (key == "VSYNC") {
+                if (!parse_bool(val, c.vsync)) bad();
+            } else if (key == "FRAME_RATE") {
+                const std::string u = upper(val);
+                if (u == "60") c.fps60 = true;
+                else if (u == "ORIGINAL" || u == "59.73") c.fps60 = false;
+                else bad();
             } else if (key == "LAUNCHER") {
                 if (!parse_bool(val, c.launcher)) bad();
             } else bad();
@@ -295,6 +302,8 @@ bool save_config(const std::filesystem::path& path, const Config& c) {
     o << "[window]\n"
       << "scale = " << c.scale << "             ; window size (multiple of 240x160)\n"
       << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n"
+      << "vsync = " << (c.vsync ? "yes" : "no") << "           ; sync frames to the monitor refresh\n"
+      << "frame_rate = " << (c.fps60 ? "60" : "original") << "      ; 60 or original (59.73, like the GBA)\n"
       << "launcher = " << (c.launcher ? "yes" : "no") << "        ; no = start the game directly\n\n"
       << "[audio]\n"
       << "volume = " << c.volume << "          ; 0-100 (0 = muted)\n\n"
