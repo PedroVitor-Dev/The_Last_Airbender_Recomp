@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cstring>
 
+#if defined(_M_X64) || defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+
 #include "gba/gba.h"
 #include "gba/profile.h"
 
@@ -185,6 +189,7 @@ void Ppu::render_sprites(int line) {
     obj_prio_.fill(4);
     obj_semi_.fill(false);
     obj_window_.fill(false);
+    obj_prio_used_ = 0;
 
     for (int n = 0; n < 128; ++n) {
         const uint16_t a0 = rd16(oam + n * 8), a1 = rd16(oam + n * 8 + 2), a2 = rd16(oam + n * 8 + 4);
@@ -255,6 +260,7 @@ void Ppu::render_sprites(int line) {
                 obj_line_[x] = static_cast<uint16_t>((rd16(pal + color_off) & 0x7FFF) | kOpaque);
                 obj_prio_[x] = static_cast<uint8_t>(prio);
                 obj_semi_[x] = mode == 1;
+                obj_prio_used_ |= static_cast<uint8_t>(1 << prio);
             }
         }
     }
@@ -316,14 +322,6 @@ void Ppu::compose(int line) {
 
     uint32_t* out = &frame_[line * kScreenW];
 
-    // Camadas ativas já resolvidas para ponteiros (ordem de desenho).
-    const uint16_t* layer[4] = {};
-    int layer_prio[4] = {};
-    for (int i = 0; i < nbg; ++i) {
-        layer[i] = bg_line_[order[i]].data();
-        layer_prio[i] = bg_prio[order[i]];
-    }
-
     if (prof::enabled) {
         bool any_semi = false;
         for (int x = 0; x < kScreenW; ++x) any_semi |= obj_semi_[x];
@@ -334,86 +332,117 @@ void Ppu::compose(int line) {
         c.lines_semi += any_semi;
     }
 
+    // Máscara de janela por pixel (bits 0-3 BGs, 4 OBJ, 5 efeitos).
+    alignas(16) uint8_t mask[kScreenW];
+    if (any_win) {
+        for (int x = 0; x < kScreenW; ++x) {
+            if (wl[0].on && in_x(wl[0], x)) mask[x] = winin & 0x3F;
+            else if (wl[1].on && in_x(wl[1], x)) mask[x] = (winin >> 8) & 0x3F;
+            else if (winobj && obj_window_[x]) mask[x] = (winout >> 8) & 0x3F;
+            else mask[x] = winout & 0x3F;
+        }
+    }
+
+    // Pintor, de trás para frente: cada pixel opaco de uma camada empurra o topo atual
+    // para "segunda camada". Ordem: prioridade 3 → 0; dentro dela, BG3 → BG0 e por último
+    // os sprites daquela prioridade (sprite fica acima de BG de mesma prioridade).
+    // Resultado: top = primeira camada visível, bot = segunda (backdrop = id 5).
+    alignas(16) uint16_t top[kScreenW], bot[kScreenW];
+    alignas(16) uint16_t tid[kScreenW], bid[kScreenW];
+    alignas(16) uint16_t mask16[kScreenW];
+    alignas(16) uint16_t prio16[kScreenW];
+    std::fill_n(top, kScreenW, backdrop);
+    std::fill_n(bot, kScreenW, backdrop);
+    std::fill_n(tid, kScreenW, uint16_t(5));
+    std::fill_n(bid, kScreenW, uint16_t(5));
+    if (any_win)
+        for (int x = 0; x < kScreenW; ++x) mask16[x] = mask[x];
+    if (obj_on && obj_prio_used_)
+        for (int x = 0; x < kScreenW; ++x) prio16[x] = obj_prio_[x];
+
+    // Aplica uma camada: onde o pixel é opaco (e liberado pela janela / tem a prioridade
+    // pedida), o topo desce para "segunda" e a camada vira o topo.
+    auto paint = [&](const uint16_t* src, uint16_t id, uint16_t mask_bit, bool by_prio, uint16_t prio) {
+#if defined(_M_X64) || defined(__SSE2__)
+        const __m128i vid = _mm_set1_epi16(static_cast<short>(id));
+        const __m128i vbit = _mm_set1_epi16(static_cast<short>(mask_bit));
+        const __m128i vprio = _mm_set1_epi16(static_cast<short>(prio));
+        const __m128i zero = _mm_setzero_si128();
+        for (int x = 0; x < kScreenW; x += 8) {
+            const __m128i c = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + x));
+            __m128i o = _mm_srai_epi16(c, 15); // 0xFFFF onde o bit 15 (opaco) está ligado
+            if (any_win) {
+                const __m128i m = _mm_load_si128(reinterpret_cast<const __m128i*>(mask16 + x));
+                o = _mm_andnot_si128(_mm_cmpeq_epi16(_mm_and_si128(m, vbit), zero), o);
+            }
+            if (by_prio) {
+                const __m128i pr = _mm_load_si128(reinterpret_cast<const __m128i*>(prio16 + x));
+                o = _mm_and_si128(o, _mm_cmpeq_epi16(pr, vprio));
+            }
+            __m128i* pt = reinterpret_cast<__m128i*>(top + x);
+            __m128i* pb = reinterpret_cast<__m128i*>(bot + x);
+            __m128i* pti = reinterpret_cast<__m128i*>(tid + x);
+            __m128i* pbi = reinterpret_cast<__m128i*>(bid + x);
+            const __m128i t = _mm_load_si128(pt), ti = _mm_load_si128(pti);
+            _mm_store_si128(pb, _mm_or_si128(_mm_and_si128(o, t), _mm_andnot_si128(o, _mm_load_si128(pb))));
+            _mm_store_si128(pbi, _mm_or_si128(_mm_and_si128(o, ti), _mm_andnot_si128(o, _mm_load_si128(pbi))));
+            _mm_store_si128(pt, _mm_or_si128(_mm_and_si128(o, c), _mm_andnot_si128(o, t)));
+            _mm_store_si128(pti, _mm_or_si128(_mm_and_si128(o, vid), _mm_andnot_si128(o, ti)));
+        }
+#else
+        for (int x = 0; x < kScreenW; ++x) {
+            const uint16_t c = src[x];
+            bool o = (c & kOpaque) != 0;
+            if (any_win) o = o && (mask16[x] & mask_bit);
+            if (by_prio) o = o && prio16[x] == prio;
+            if (o) {
+                bot[x] = top[x];
+                bid[x] = tid[x];
+                top[x] = c;
+                tid[x] = id;
+            }
+        }
+#endif
+    };
+    for (int p = 3; p >= 0; --p) {
+        for (int b = 3; b >= 0; --b)
+            if (((bg_mask >> b) & 1) && bg_prio[b] == p)
+                paint(bg_line_[b].data(), static_cast<uint16_t>(b), static_cast<uint16_t>(1 << b), false, 0);
+        if (obj_on && ((obj_prio_used_ >> p) & 1))
+            paint(obj_line_.data(), 4, 0x10, true, static_cast<uint16_t>(p));
+    }
+
+    // Efeitos de cor. Sem nada a fazer na linha (sem efeito e sem sprite semitransparente),
+    // é só converter.
+    bool any_semi = false;
+    for (int x = 0; x < kScreenW; ++x) any_semi |= obj_semi_[x];
+    if (blend_mode == 0 && !any_semi) {
+        for (int x = 0; x < kScreenW; ++x) out[x] = kArgb.v[top[x] & 0x7FFF];
+        return;
+    }
+
     // Brilho (modos 2/3) por canal, calculado uma vez por linha.
     uint8_t bright[32];
     for (int c = 0; c < 32; ++c)
         bright[c] = static_cast<uint8_t>(blend_mode == 2 ? c + (((31 - c) * evy) >> 4) : c - ((c * evy) >> 4));
 
+    // Passe final escalar. (Decidir com SSE2 quais blocos de 8 px têm efeito foi testado e
+    // ficou mais lento: neste jogo a maioria dos pixels recebe efeito de cor.)
     for (int x = 0; x < kScreenW; ++x) {
-        uint8_t mask = 0x3F;
-        if (any_win) {
-            if (wl[0].on && in_x(wl[0], x)) mask = winin & 0x3F;
-            else if (wl[1].on && in_x(wl[1], x)) mask = (winin >> 8) & 0x3F;
-            else if (winobj && obj_window_[x]) mask = (winout >> 8) & 0x3F;
-            else mask = winout & 0x3F;
-        }
-
-        // Camadas em ordem: id 0-3 = BG, 4 = OBJ, 5 = backdrop. O sprite vence BGs de
-        // prioridade igual ou maior (número maior). `i` e `obj` avançam entre as duas buscas.
-        bool obj = obj_on && (mask & 0x10) && (obj_line_[x] & kOpaque);
-        const int op = obj_prio_[x];
-        int i = 0;
-        uint16_t top = backdrop;
-        int top_id = 5;
-        for (;;) {
-            if (i < nbg && !(obj && op <= layer_prio[i])) {
-                const int b = order[i];
-                const uint16_t c = layer[i][x];
-                ++i;
-                if (((mask >> b) & 1) && (c & kOpaque)) {
-                    top = c;
-                    top_id = b;
-                    break;
-                }
-                continue;
-            }
-            if (obj) {
-                top = obj_line_[x];
-                top_id = 4;
-                obj = false;
-            }
-            break;
-        }
-        top &= 0x7FFF;
-
-        const bool top_first = (bldcnt >> top_id) & 1;
-        const bool semi_top = top_id == 4 && obj_semi_[x];
-        // A segunda camada só importa para alpha: sprite semitransparente ou modo 1.
-        bool bot_second = false;
-        uint16_t bot = backdrop;
-        if (semi_top || ((mask & 0x20) && blend_mode == 1 && top_first)) {
-            int bot_id = 5;
-            for (;;) {
-                if (i < nbg && !(obj && op <= layer_prio[i])) {
-                    const int b = order[i];
-                    const uint16_t c = layer[i][x];
-                    ++i;
-                    if (((mask >> b) & 1) && (c & kOpaque)) {
-                        bot = c;
-                        bot_id = b;
-                        break;
-                    }
-                    continue;
-                }
-                if (obj) {
-                    bot = obj_line_[x];
-                    bot_id = 4;
-                }
-                break;
-            }
-            bot &= 0x7FFF;
-            bot_second = (bldcnt >> (8 + bot_id)) & 1;
-        }
-
-        uint16_t color = top;
-        if (semi_top && bot_second) {
-            color = alpha(top, bot);
-        } else if (mask & 0x20) {
+        const uint8_t m = any_win ? mask[x] : 0x3F;
+        const uint16_t t = top[x] & 0x7FFF;
+        const int ti = tid[x];
+        const bool top_first = (bldcnt >> ti) & 1;
+        const bool bot_second = (bldcnt >> (8 + bid[x])) & 1;
+        uint16_t color = t;
+        if (ti == 4 && obj_semi_[x] && bot_second) {
+            color = alpha(t, bot[x] & 0x7FFF);
+        } else if (m & 0x20) {
             if (blend_mode == 1 && top_first && bot_second) {
-                color = alpha(top, bot);
+                color = alpha(t, bot[x] & 0x7FFF);
             } else if ((blend_mode == 2 || blend_mode == 3) && top_first) {
-                color = static_cast<uint16_t>(bright[top & 31] | (bright[(top >> 5) & 31] << 5) |
-                                              (bright[(top >> 10) & 31] << 10));
+                color = static_cast<uint16_t>(bright[t & 31] | (bright[(t >> 5) & 31] << 5) |
+                                              (bright[(t >> 10) & 31] << 10));
             }
         }
         out[x] = kArgb.v[color];

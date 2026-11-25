@@ -217,6 +217,7 @@ public:
     const std::array<uint32_t, kScreenW * kScreenH>& frame() const { return frame_; }
 
 private:
+    friend struct PpuTestAccess; // tests/test_ppu.cpp compara a composição com a referência
     void render_text_bg(int bg, int line);
     void render_affine_bg(int bg);
     void render_bitmap(int mode, int line);
@@ -231,6 +232,7 @@ private:
     std::array<uint8_t, kScreenW> obj_prio_{};
     std::array<bool, kScreenW> obj_semi_{};
     std::array<bool, kScreenW> obj_window_{};
+    uint8_t obj_prio_used_ = 0; // bit p = algum pixel de sprite com prioridade p nesta linha
     std::array<int32_t, 2> affine_x_{}, affine_y_{};
 };
 
