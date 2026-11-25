@@ -2,7 +2,9 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.0.2] — 2026-11-25
+
+Fixes a freeze when talking to NPCs and slowdown while walking. **Everyone on 0.0.1 should update.**
 
 ### Added
 - Launcher: title screen with the cover art, with Play, Settings, Select ROM… and Quit. Shows the
@@ -16,7 +18,8 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
   the clock, so frames are evenly spaced.
 
 ### Fixed
-- Slowdown while walking: the recompiled code charged more CPU cycles than the interpreter (code
+- Freeze when talking to the village children at the start of the game (the dialogue box never
+  appeared) and slowdown while walking: the recompiled code charged more CPU cycles than the interpreter (code
   in IWRAM, like the sound mixer, was charged as if it ran from ROM), so the game lost about 1
   frame in 10 when the character moved. It now runs a full 60 logic frames per second.
 
@@ -40,4 +43,5 @@ First public release. The whole game runs natively on PC through static recompil
 ### Requirements
 - Windows 10/11, 64-bit. Your own ROM dump of the USA cartridge (`BQZE`).
 
+[0.0.2]: https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/tag/v0.0.2
 [0.0.1]: https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/tag/v0.0.1
