@@ -40,7 +40,7 @@
   mais adiantadas
 - [x] Desempenho medido e PPU otimizada (SSE2 na composição e nos efeitos, paleta pré-convertida): 16x → 56x tempo real; o código recompilado sozinho
   roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
-- [ ] Paleta pré-convertida nos sprites, menos syncs de timer;
+- [ ] Menos syncs de timer, conversão ARGB com SIMD;
   otimizações do código gerado (flags preguiçosas) só depois, por terem pouco retorno (~10%)
 
 ## Fase 4 — Melhorias de PC

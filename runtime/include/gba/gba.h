@@ -243,6 +243,19 @@ private:
     std::array<uint8_t, 512> bg_pal_cache_{};
     std::array<uint16_t, 256> bg_pal4_{}, bg_pal8_{};
     bool bg_pal_valid_ = false;
+
+    // Sprites ativos (habilitados, forma válida) com sua faixa vertical [top, bottom), em
+    // ordem de OAM. Reconstruída quando a OAM muda (comparação com cópia em cache por
+    // linha); cada linha percorre só esta lista em vez dos 128 registros.
+    struct ObjSpan {
+        int16_t top, bottom;
+        uint8_t n;
+    };
+    void refresh_oam();
+    std::array<uint8_t, 0x400> oam_cache_{};
+    std::array<ObjSpan, 128> obj_spans_{};
+    int obj_span_count_ = 0;
+    bool oam_valid_ = false;
 };
 
 // ─────────────────────────────────────────────────── código recompilado ──

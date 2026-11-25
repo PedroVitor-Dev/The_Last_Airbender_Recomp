@@ -73,8 +73,19 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
   20 000 casos de BG de texto contra a primeira implementação por pixel. Mutações no flip e
   na cache de paleta são detectadas.
 
+**5ª rodada — sprites:**
+- **Cache da OAM:** cada linha percorria os 128 registros da OAM. Agora a PPU mantém uma lista
+  compacta dos sprites ativos com a faixa vertical de cada um, reconstruída quando a OAM muda
+  (comparação de 1 KB com uma cópia em cache, uma vez por linha). O desenho de cada sprite
+  continua idêntico. Resultado em A/B intercalado (5 rodadas): mediana +4%. Uma mutação que
+  faz a cache ignorar mudanças é detectada pelo `test_ppu` (4 805 de 5 000 casos).
+
 **Tentativas medidas e descartadas:**
 - separar o laço da composição em versões com e sem janela (template): ~5% mais lento;
+- paleta de OBJ pré-convertida + sprites decodificados por tile: correta (passou no
+  `test_ppu` depois de corrigir a volta de endereço em 8 bpp perto do tile 1023), mas neutra
+  a ~1,5% mais lenta no A/B. O custo dos sprites estava na varredura da OAM por linha, não
+  nos pixels, e foi isso que a cache resolveu;
 - "pintor" escalar, sem SIMD: ~20% mais lento que a busca por pixel, porque são vários passes
   e 4 arrays gravados por camada;
 - decidir com SSE2 quais blocos de 8 pixels recebem efeito de cor, mantendo o cálculo
@@ -89,11 +100,10 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 ## Próximos passos possíveis (por retorno esperado)
 
-1. **Sprites** (~11%): paleta de OBJ pré-convertida, como nos BGs.
-2. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
-3. **Menos syncs:** os overflows do timer de som geram um sync cada (~220 por quadro). As
+1. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
+2. **Menos syncs:** os overflows do timer de som geram um sync cada (~220 por quadro). As
    amostras do FIFO podem ser calculadas por aritmética na próxima sincronização de vídeo.
-4. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
+3. **Código recompilado** (flags preguiçosas, registradores em variáveis locais): ~10% do
    tempo, então o ganho total máximo é pequeno.
 
 ## Como validar uma otimização

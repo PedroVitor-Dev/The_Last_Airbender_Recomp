@@ -217,6 +217,27 @@ void Ppu::render_bitmap(int mode, int line) {
     }
 }
 
+void Ppu::refresh_oam() {
+    const uint8_t* oam = gba_.bus.oam.data();
+    if (oam_valid_ && std::memcmp(oam_cache_.data(), oam, oam_cache_.size()) == 0) return;
+    std::memcpy(oam_cache_.data(), oam, oam_cache_.size());
+    obj_span_count_ = 0;
+    for (int n = 0; n < 128; ++n) {
+        const uint16_t a0 = rd16(oam + n * 8), a1 = rd16(oam + n * 8 + 2);
+        const bool affine = a0 & 0x100;
+        if (!affine && (a0 & 0x200)) continue; // desabilitado
+        const int shape = a0 >> 14;
+        if (shape == 3) continue;
+        const int h = kObjH[shape][a1 >> 14];
+        const int bh = (affine && (a0 & 0x200)) ? h * 2 : h;
+        int sy = a0 & 0xFF;
+        if (sy >= 160) sy -= 256;
+        obj_spans_[obj_span_count_++] = {static_cast<int16_t>(sy), static_cast<int16_t>(sy + bh),
+                                         static_cast<uint8_t>(n)};
+    }
+    oam_valid_ = true;
+}
+
 void Ppu::render_sprites(int line) {
     Io& io = gba_.io;
     const uint8_t* vram = gba_.bus.vram.data();
@@ -232,7 +253,11 @@ void Ppu::render_sprites(int line) {
     obj_window_.fill(false);
     obj_prio_used_ = 0;
 
-    for (int n = 0; n < 128; ++n) {
+    refresh_oam();
+    for (int s = 0; s < obj_span_count_; ++s) {
+        const ObjSpan& span = obj_spans_[s];
+        if (line < span.top || line >= span.bottom) continue;
+        const int n = span.n;
         const uint16_t a0 = rd16(oam + n * 8), a1 = rd16(oam + n * 8 + 2), a2 = rd16(oam + n * 8 + 4);
         const bool affine = a0 & 0x100;
         if (!affine && (a0 & 0x200)) continue; // desabilitado
