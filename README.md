@@ -14,7 +14,7 @@ Cada função ARM/Thumb da ROM vira C++ e roda sobre uma reimplementação do ha
 ![Status](https://img.shields.io/badge/status-jog%C3%A1vel-5A2918)
 
 [Sobre](#-sobre) · [Destaques](#-destaques) · [Como jogar](#-como-jogar) · [Controles](#-controles) ·
-[Como funciona](#-como-funciona) · [Roadmap](#-roadmap) · [Desenvolvimento](#-desenvolvimento)
+[Como funciona](#-como-funciona) · [Roadmap](#-roadmap) · [Desenvolvimento](#-desenvolvimento) · [Apoie](#-apoie)
 
 </div>
 
@@ -212,6 +212,14 @@ python tools\pak.py build   assets\extracted build\data.pak
 </details>
 
 Os commits seguem [Conventional Commits](https://www.conventionalcommits.org/), em português.
+
+## 💖 Apoie
+
+<div align="center">
+  <a href="https://github.com/sponsors/PedroVitor-Dev">
+    <img src="docs/images/sponsor.svg" alt="Gostou do recomp? Seja patrocinador" width="640">
+  </a>
+</div>
 
 ## ⚖️ Licença
 

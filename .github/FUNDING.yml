@@ -1,0 +1,12 @@
+# Botão "Sponsor" do repositório. Para o perfil inteiro, copie este arquivo para o repositório
+# especial PedroVitor-Dev/.github (pasta .github/ ou raiz).
+# Formatos: https://docs.github.com/pt/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: [PedroVitor-Dev]
+
+# Descomente as que você usar (usuário de cada plataforma, ou link no caso de "custom"):
+# ko_fi: seu_usuario
+# buy_me_a_coffee: seu_usuario
+# patreon: seu_usuario
+# liberapay: seu_usuario
+# custom: ["https://livepix.gg/seu_usuario"]   # PIX via LivePix, link do PicPay etc.
