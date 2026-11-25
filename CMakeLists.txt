@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(MSVC)
     add_compile_options(/W4 /utf-8 /permissive- /Zc:__cplusplus)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra)
 endif()
@@ -24,6 +25,24 @@ add_executable(tlarecomp
     recompiler/src/main.cpp
     recompiler/src/analysis.cpp)
 target_link_libraries(tlarecomp PRIVATE tla_core)
+
+# Runtime do GBA (hardware + interpretador)
+add_library(tla_gba STATIC
+    runtime/src/bus.cpp
+    runtime/src/cpu.cpp
+    runtime/src/io.cpp
+    runtime/src/ppu.cpp
+    runtime/src/bios.cpp
+    runtime/src/gba.cpp)
+target_include_directories(tla_gba PUBLIC runtime/include)
+target_link_libraries(tla_gba PUBLIC tla_core)
+
+# Frontend
+add_executable(tlagba frontend/src/main.cpp)
+target_link_libraries(tlagba PRIVATE tla_gba)
+if(WIN32)
+    target_link_libraries(tlagba PRIVATE winmm)
+endif()
 
 # Testes
 enable_testing()
