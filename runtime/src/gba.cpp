@@ -136,7 +136,7 @@ void Gba::sync() {
 void Gba::halt_wait() {
     const uint64_t irqs = cpu.irq_count;
     while (!io.irq_any() && cpu.irq_count == irqs) {
-        if (cycles < next_event) cycles = next_event;
+        if (cycles < next_event) idle_cycles += next_event - cycles, cycles = next_event;
         sync();
     }
     cpu.halted = false;

@@ -339,6 +339,7 @@ public:
     Apu apu;
     uint64_t frame_count = 0;
     uint64_t cycles = 0;
+    uint64_t idle_cycles = 0; // diagnóstico: ciclos parados em HALT (fora do save state)
     uint64_t next_event = 0;
 
     // Estatísticas do fallback: endereço → nº de entradas pelo interpretador.

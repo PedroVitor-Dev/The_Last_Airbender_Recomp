@@ -140,12 +140,47 @@ private:
         return total;
     }
 
+    // Ciclos de um acesso à memória na região `region` (mesma tabela de Bus::access_cycles, usada
+    // pelo interpretador: os dois caminhos precisam custar o mesmo para o jogo ter o mesmo ritmo).
+    static uint32_t region_cycles(uint32_t region, bool wide) {
+        switch (region) {
+        case 0x02: return wide ? 6 : 3;                       // EWRAM (16 bits, 2 estados de espera)
+        case 0x03: return 1;                                  // IWRAM
+        case 0x05: case 0x06: case 0x07: return wide ? 2 : 1; // paleta, VRAM, OAM
+        case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: return wide ? 6 : 3; // ROM
+        default: return 1;
+        }
+    }
+
+    // Custo de um acesso a dados quando a região dá para saber sem executar: pilha (SP, sempre na
+    // IWRAM) ou pool de literais (PC, na região do próprio código). Senão, 0 (desconhecida).
+    uint32_t known_data_cycles(uint8_t base, bool wide) const {
+        if (base == 13) return region_cycles(0x03, wide);
+        if (base == 15) return region_cycles(f_.addr >> 24, wide);
+        return 0;
+    }
+
     uint32_t instr_cost(const Instr& in) const {
-        uint32_t c = f_.thumb ? 3 : 6; // busca na ROM
+        // Busca: depende de onde o código está (ROM, ou IWRAM nos overlays como o mixer de som).
+        uint32_t c = region_cycles(f_.addr >> 24, !f_.thumb);
+        const bool word = in.op == Op::LDR || in.op == Op::STR;
         switch (in.op) {
-        case Op::LDR: case Op::LDRB: case Op::LDRH: case Op::LDRSB: case Op::LDRSH: c += 4; break;
-        case Op::STR: case Op::STRB: case Op::STRH: c += 3; break;
-        case Op::LDM: case Op::STM: c += 3 * static_cast<uint32_t>(std::popcount(in.reg_list)); break;
+        case Op::LDR: case Op::LDRB: case Op::LDRH: case Op::LDRSB: case Op::LDRSH: {
+            const uint32_t k = known_data_cycles(in.rn, word);
+            c += k ? k + 1 : 4; // +1 ciclo interno da carga; região desconhecida: estimativa média
+            break;
+        }
+        case Op::STR: case Op::STRB: case Op::STRH: {
+            const uint32_t k = known_data_cycles(in.rn, word);
+            c += k ? k : 3;
+            break;
+        }
+        case Op::LDM: case Op::STM: {
+            const uint32_t n = static_cast<uint32_t>(std::popcount(in.reg_list));
+            const uint32_t k = known_data_cycles(in.rn, true);
+            c += n * (k ? k : 3);
+            break;
+        }
         case Op::MUL: case Op::MLA: c += 3; break;
         case Op::UMULL: case Op::UMLAL: case Op::SMULL: case Op::SMLAL: c += 4; break;
         case Op::SWP: case Op::SWPB: c += 4; break;

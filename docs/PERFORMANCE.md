@@ -143,3 +143,16 @@ A execução é determinística: duas rodadas iguais produzem os mesmos 70 quadr
 linha, e isso distorce justamente as partes que se tenta otimizar. Mudanças na
 composição ou nos sprites também precisam passar no `test_ppu`. Para mudanças
 no código gerado ou no runtime da CPU, rode também os testes de [TESTING.md](TESTING.md).
+
+## Lag do jogo (quadros de lógica × quadros de vídeo)
+
+O jogo não usa HALT: espera o VBlank num laço. Para saber se ele está perdendo quadros, compare o
+contador de quadros de lógica dele (EWRAM `0x0200_30F0`, avança uma vez por volta do laço
+principal) com os quadros de vídeo: rode até o quadro N e N+160 com `--dump-ram` e subtraia.
+
+Com o save state de teste (andando na neve), o código recompilado perdia **17 de 160 quadros**
+(10,6%) e o interpretador nenhum: o emissor cobrava a busca de instruções sempre como ROM
+(3/6 ciclos), inclusive no código dos overlays na IWRAM (1 ciclo), como o mixer de som. Com o
+custo por região — igual ao de `Bus::access_cycles` — e os acessos à pilha (SP) e ao pool de
+literais (PC) na região certa, o recompilado passou a 160 de 160. **O custo do código gerado
+precisa acompanhar o do interpretador**: diferença ali vira lag (ou jogo rápido demais).

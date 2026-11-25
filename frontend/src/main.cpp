@@ -211,8 +211,17 @@ int run_headless(gba::Gba& g, const Options& o) {
     g.set_keys(scripted_keys(o.script, 0));
     gba::prof::enabled = o.profile;
     g.render = !o.no_render;
+    // Quadros em que o jogo não chegou a esperar o VBlank (HALT): o trabalho do quadro não coube
+    // no tempo do quadro ("lag" do próprio jogo).
+    uint64_t idle_prev = g.idle_cycles, lag_frames = 0, counted = 0;
+    const uint64_t first = g.frame_count, idle0 = g.idle_cycles, cycles0 = g.cycles;
     g.run([&] {
         const uint64_t f = g.frame_count; // quadros completos
+        if (f > first + 1) {
+            ++counted;
+            if (g.idle_cycles == idle_prev) ++lag_frames;
+        }
+        idle_prev = g.idle_cycles;
         auto chunk = g.apu.take_samples();
         if (!o.wav.empty()) audio.insert(audio.end(), chunk.begin(), chunk.end());
         if (o.shot_every && f % o.shot_every == 0)
@@ -235,6 +244,10 @@ int run_headless(gba::Gba& g, const Options& o) {
     std::printf("%llu quadros em %.2f s (%.1f fps, %.1fx tempo real), modo %s\n",
                 static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
                 g.frame_count / secs / 59.7275, g.has_recomp() ? "recompilado" : "interpretador");
+    if (g.cycles > cycles0)
+        std::printf("CPU ociosa (HALT): %.1f%%; quadros sem espera pelo VBlank: %llu de %llu\n",
+                    100.0 * static_cast<double>(g.idle_cycles - idle0) / static_cast<double>(g.cycles - cycles0),
+                    static_cast<unsigned long long>(lag_frames), static_cast<unsigned long long>(counted));
     print_stats(g, o);
     if (o.profile) {
         const auto& c = gba::prof::counters;
