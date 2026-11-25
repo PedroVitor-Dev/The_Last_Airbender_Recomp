@@ -8,9 +8,11 @@ hardware do GBA.
 
 ## Status
 
-Fase 3: o jogo roda **recompilado**, com imagem e som, a ~16x a velocidade do GBA quando sem
-limite. Só 2 instruções passam pelo interpretador em 7000 quadros, e o teste diferencial dá
-0 divergências. Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Fase 3: o jogo roda **recompilado**, com imagem e som, a ~35x a velocidade do GBA quando sem
+limite (o código recompilado sozinho roda a ~216x). Só 2 instruções passam pelo interpretador
+em 7000 quadros, e os testes diferenciais dão 0 divergências. Veja
+[docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[docs/TESTING.md](docs/TESTING.md) e [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ## Requisitos
 
@@ -48,6 +50,7 @@ Teclado: setas, **X** = A, **Z** = B, **Enter** = Start, **Backspace** = Select,
 | `--press TECLA@ini-fim` | roteiro de botões |
 | `--wav f.wav` | grava o áudio |
 | `--fallback-log f.txt` | endereços executados pelo interpretador |
+| `--profile` / `--no-render` | tempo por subsistema / pula a renderização (diagnóstico) |
 
 ## Ferramentas de desenvolvimento
 

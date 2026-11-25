@@ -72,7 +72,7 @@ void Gba::begin_line() {
 
 void Gba::advance_video() {
     if (!in_hblank_) {
-        if (line_ < static_cast<uint32_t>(kScreenH)) {
+        if (render && line_ < static_cast<uint32_t>(kScreenH)) {
             prof::Scope s(prof::counters.ppu_ns);
             ppu.render_line(static_cast<int>(line_));
         }

@@ -38,7 +38,10 @@
   e teste de mutação — ver [TESTING.md](TESTING.md)
 - [ ] Replay com IRQs habilitadas (exige timing idêntico entre os modos) e roteiros de fases
   mais adiantadas
-- [ ] Desempenho: flags preguiçosas, registradores em variáveis locais, menos `sync_at`
+- [x] Desempenho medido e PPU otimizada: 16x → 35x tempo real; o código recompilado sozinho
+  roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] Composição SIMD / sprites por linha / menos syncs de timer; otimizações do código
+  gerado (flags preguiçosas) só depois, por terem pouco retorno (~8% do tempo)
 
 ## Fase 4 — Melhorias de PC
 - [ ] Resolução interna maior / widescreen (onde der)

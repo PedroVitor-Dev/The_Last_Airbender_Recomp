@@ -273,6 +273,7 @@ public:
     void copy_state_from(const Gba& o);
     // Vigia: sync() lança StopRequested quando cycles passa deste valor.
     uint64_t cycle_limit = UINT64_MAX;
+    bool render = true; // diagnóstico: false pula a renderização (não altera o estado do jogo)
 
     // ── API usada pelo código recompilado ──
     void sync();                                 // processa eventos vencidos (vídeo, timers)

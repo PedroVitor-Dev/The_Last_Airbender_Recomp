@@ -58,7 +58,7 @@ struct Press {
 
 struct Options {
     fs::path rom;
-    bool headless = false, mute = false, interp = false, profile = false;
+    bool headless = false, mute = false, interp = false, profile = false, no_render = false;
     uint64_t frames = 600, shot_every = 0;
     bool frames_given = false;
     std::string shot, shot_prefix = "frame", wav, fallback_log, dump_ram;
@@ -163,6 +163,7 @@ int run_headless(gba::Gba& g, const Options& o) {
     const auto t0 = std::chrono::steady_clock::now();
     g.set_keys(scripted_keys(o.script, 0));
     gba::prof::enabled = o.profile;
+    g.render = !o.no_render;
     g.run([&] {
         const uint64_t f = g.frame_count; // quadros completos
         auto chunk = g.apu.take_samples();
@@ -318,6 +319,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         if (a == "--headless") o.headless = true;
         else if (a == "--interp") o.interp = true;
         else if (a == "--profile") o.profile = true;
+        else if (a == "--no-render") o.no_render = true;
         else if (a == "--mute") o.mute = true;
         else if (a == "--frames" && i + 1 < argc) o.frames = std::stoull(argv[++i]), o.frames_given = true;
         else if (a == "--shot" && i + 1 < argc) o.shot = argv[++i];
