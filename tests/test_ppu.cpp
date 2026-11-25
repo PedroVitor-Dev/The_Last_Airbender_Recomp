@@ -26,6 +26,7 @@ struct PpuTestAccess {
     static uint8_t& prio_used(Ppu& p) { return p.obj_prio_used_; }
     static void compose(Ppu& p, int line) { p.compose(line); }
     static void sprites(Ppu& p, int line) { p.render_sprites(line); }
+    static void text_bg(Ppu& p, int bg, int line) { p.render_text_bg(bg, line); }
 };
 
 } // namespace gba
@@ -274,6 +275,77 @@ int test_sprites(gba::Gba& g, std::mt19937& rng) {
     return failures;
 }
 
+// BG de texto de referência: a primeira implementação, pixel a pixel.
+void reference_text_bg(gba::Gba& g, int bg, int line, uint16_t* out) {
+    auto rd = [](const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; };
+    const uint8_t* vram = g.bus.vram.data();
+    const uint8_t* pal = g.bus.palette.data();
+    const uint16_t cnt = g.io.reg(0x08 + bg * 2);
+    const uint32_t char_base = ((cnt >> 2) & 3) * 0x4000;
+    const uint32_t screen_base = ((cnt >> 8) & 31) * 0x800;
+    const bool c256 = cnt & 0x80;
+    const int size = cnt >> 14;
+    const int w = (size & 1) ? 512 : 256, h = (size & 2) ? 512 : 256;
+    const int hofs = g.io.reg(0x10 + bg * 4) & 0x1FF, vofs = g.io.reg(0x12 + bg * 4) & 0x1FF;
+    const int ty = (line + vofs) & (h - 1);
+    for (int x = 0; x < W; ++x) {
+        const int tx = (x + hofs) & (w - 1);
+        const int block = (tx >> 8) + (ty >> 8) * (w == 512 ? 2 : 1);
+        const uint32_t map_addr = screen_base + block * 0x800 + (((ty & 255) >> 3) * 32 + ((tx & 255) >> 3)) * 2;
+        const uint16_t e = rd(vram + (map_addr & 0xFFFF));
+        const uint32_t tile = e & 0x3FF;
+        int px = tx & 7, py = ty & 7;
+        if (e & 0x400) px = 7 - px;
+        if (e & 0x800) py = 7 - py;
+        uint32_t idx, color_off;
+        if (c256) {
+            const uint32_t a = char_base + tile * 64 + py * 8 + px;
+            if (a >= 0x10000) { out[x] = 0; continue; }
+            idx = vram[a];
+            color_off = idx * 2;
+        } else {
+            const uint32_t a = char_base + tile * 32 + py * 4 + px / 2;
+            if (a >= 0x10000) { out[x] = 0; continue; }
+            idx = (vram[a] >> ((px & 1) * 4)) & 15;
+            color_off = ((e >> 12) * 16 + idx) * 2;
+        }
+        out[x] = idx ? static_cast<uint16_t>((rd(pal + color_off) & 0x7FFF) | kOpaque) : 0;
+    }
+}
+
+int test_text_bg(gba::Gba& g, std::mt19937& rng) {
+    gba::Ppu& ppu = g.ppu;
+    const int kCases = 20000;
+    int failures = 0;
+    std::array<uint16_t, W> ref{};
+    for (int t = 0; t < kCases; ++t) {
+        // A cada 50 casos, VRAM/paleta novas (com muitos zeros: tiles transparentes).
+        if (t % 50 == 0) {
+            for (size_t i = 0; i < 0x10000; ++i) g.bus.vram[i] = static_cast<uint8_t>(rng() % 4 ? rng() : 0);
+            for (auto& b : g.bus.palette) b = static_cast<uint8_t>(rng());
+        }
+        // Às vezes muda só uma cor da paleta (a cache de paleta da PPU precisa perceber).
+        if (rng() % 4 == 0) g.bus.palette[rng() % 512] = static_cast<uint8_t>(rng());
+        const int bg = static_cast<int>(rng() % 4);
+        g.io.reg(0x08 + bg * 2) = static_cast<uint16_t>(rng());
+        g.io.reg(0x10 + bg * 4) = static_cast<uint16_t>(rng());
+        g.io.reg(0x12 + bg * 4) = static_cast<uint16_t>(rng());
+        const int line = static_cast<int>(rng() % gba::kScreenH);
+        reference_text_bg(g, bg, line, ref.data());
+        PpuTestAccess::text_bg(ppu, bg, line);
+        const auto& got = PpuTestAccess::bg(ppu)[bg];
+        for (int x = 0; x < W; ++x)
+            if (got[x] != ref[x]) {
+                if (++failures <= 10)
+                    std::printf("FALHOU BG texto caso %d bg%d linha %d x=%d: esperado %04X, obtido %04X (CNT %04X)\n", t,
+                                bg, line, x, ref[x], got[x], g.io.reg(0x08 + bg * 2));
+                break;
+            }
+    }
+    std::printf("%d/%d casos de BG de texto idênticos à referência\n", kCases - failures, kCases);
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -345,5 +417,6 @@ int main() {
     }
     std::printf("%d/%d casos de composição idênticos à referência\n", kCases - failures, kCases);
     failures += test_sprites(*g, rng);
+    failures += test_text_bg(*g, rng);
     return failures ? 1 : 0;
 }

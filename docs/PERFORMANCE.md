@@ -18,7 +18,8 @@ segundo; "35x" quer dizer que um quadro custa 1/35 do tempo disponível.
 | Recompilado, PPU original | ~976 | ~16x |
 | Recompilado, PPU 1ª rodada (por tile, camadas ordenadas, tabelas) | ~2 070 | ~35x |
 | Recompilado, PPU 2ª rodada (composição SSE2, tiles transparentes, sprites) | ~2 540 | ~42x |
-| **Recompilado, PPU 3ª rodada (efeitos de cor em SSE2)** | **~3 070** | **~51x** |
+| Recompilado, PPU 3ª rodada (efeitos de cor em SSE2) | ~3 070 | ~51x |
+| **Recompilado, PPU 4ª rodada (BGs de texto com paleta pré-convertida)** | **~3 350** | **~56x** |
 | Interpretador sem renderização | ~383 | ~6x |
 | **Recompilado sem renderização** | **~12 900** | **~216x** |
 
@@ -29,7 +30,7 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 | Subsistema | Fatia |
 |------------|------:|
-| PPU (renderização) | ~67% (composição ~30%, BGs ~28%, sprites ~10%) |
+| PPU (renderização) | ~64% (composição ~33%, BGs ~21%, sprites ~11%) |
 | Sincronização (eventos de vídeo/timer, ~658 por quadro) | ~14% |
 | Código recompilado e o resto | ~14% |
 | APU | ~5% |
@@ -59,6 +60,19 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
   Resultado: ~2 540 → ~3 070 fps. Uma mutação (EVA trocado por EVB) é detectada pelo
   `test_ppu` em 4 558 de 20 000 casos.
 
+**4ª rodada — BGs de texto:**
+- **Paleta pré-convertida:** duas tabelas (4 bpp e 8 bpp) já com o bit de opaco e com 0 nos
+  índices transparentes. Cada pixel vira uma leitura de tabela, sem desvio. A PPU compara a
+  paleta de BG com uma cópia em cache uma vez por linha (512 bytes) e reconstrói as tabelas
+  só quando ela muda, o que cobre qualquer caminho de escrita (CPU, DMA, BIOS, cópia de estado).
+- **Flip horizontal por tile:** a ordem dos nibbles é invertida uma vez, em vez de testar a
+  cada pixel.
+- **Tiles inteiros desenrolados** (8 escritas diretas).
+
+  Resultado: ~3 070 → ~3 350 fps, com os BGs caindo de ~28% para ~21%. O `test_ppu` ganhou
+  20 000 casos de BG de texto contra a primeira implementação por pixel. Mutações no flip e
+  na cache de paleta são detectadas.
+
 **Tentativas medidas e descartadas:**
 - separar o laço da composição em versões com e sem janela (template): ~5% mais lento;
 - "pintor" escalar, sem SIMD: ~20% mais lento que a busca por pixel, porque são vários passes
@@ -75,8 +89,7 @@ Sem renderização, o código recompilado é **~34x mais rápido** que o interpr
 
 ## Próximos passos possíveis (por retorno esperado)
 
-1. **BGs de texto** (~28%, agora a maior fatia da PPU): paleta pré-convertida por linha, ou
-   cache de linhas de tile decodificadas.
+1. **Sprites** (~11%): paleta de OBJ pré-convertida, como nos BGs.
 2. **Conversão final para ARGB** com SIMD (hoje é uma tabela de 32 K entradas, pixel a pixel).
 3. **Menos syncs:** os overflows do timer de som geram um sync cada (~220 por quadro). As
    amostras do FIFO podem ser calculadas por aritmética na próxima sincronização de vídeo.

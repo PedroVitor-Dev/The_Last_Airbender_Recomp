@@ -38,9 +38,9 @@
   e teste de mutação — ver [TESTING.md](TESTING.md)
 - [ ] Replay com IRQs habilitadas (exige timing idêntico entre os modos) e roteiros de fases
   mais adiantadas
-- [x] Desempenho medido e PPU otimizada (composição e efeitos de cor em SSE2): 16x → 51x tempo real; o código recompilado sozinho
+- [x] Desempenho medido e PPU otimizada (SSE2 na composição e nos efeitos, paleta pré-convertida): 16x → 56x tempo real; o código recompilado sozinho
   roda a ~216x (ver [PERFORMANCE.md](PERFORMANCE.md))
-- [ ] Paleta pré-convertida nos BGs, menos syncs de timer;
+- [ ] Paleta pré-convertida nos sprites, menos syncs de timer;
   otimizações do código gerado (flags preguiçosas) só depois, por terem pouco retorno (~10%)
 
 ## Fase 4 — Melhorias de PC

@@ -234,6 +234,15 @@ private:
     std::array<bool, kScreenW> obj_window_{};
     uint8_t obj_prio_used_ = 0; // bit p = algum pixel de sprite com prioridade p nesta linha
     std::array<int32_t, 2> affine_x_{}, affine_y_{};
+
+    // Paleta de BG pré-convertida (BGR555 | opaco; 0 = transparente) para 4 bpp (índice 0 de
+    // cada banco transparente) e 8 bpp (só o índice 0). Reconstruída quando a paleta muda:
+    // a PPU compara com a cópia em cache uma vez por linha, então qualquer caminho de escrita
+    // (CPU, DMA, BIOS, cópia de estado) é percebido.
+    void refresh_bg_palette();
+    std::array<uint8_t, 512> bg_pal_cache_{};
+    std::array<uint16_t, 256> bg_pal4_{}, bg_pal8_{};
+    bool bg_pal_valid_ = false;
 };
 
 // ─────────────────────────────────────────────────── código recompilado ──

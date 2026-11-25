@@ -64,10 +64,32 @@ void Ppu::on_affine_ref_write(int bg) {
     affine_y_[i] = ref28(io.reg(base + 4), io.reg(base + 6));
 }
 
+void Ppu::refresh_bg_palette() {
+    const uint8_t* pal = gba_.bus.palette.data();
+    if (bg_pal_valid_ && std::memcmp(bg_pal_cache_.data(), pal, 512) == 0) return;
+    std::memcpy(bg_pal_cache_.data(), pal, 512);
+    for (int i = 0; i < 256; ++i) {
+        const uint16_t c = static_cast<uint16_t>((rd16(pal + i * 2) & 0x7FFF) | kOpaque);
+        bg_pal4_[i] = (i & 15) ? c : 0;
+        bg_pal8_[i] = i ? c : 0;
+    }
+    bg_pal_valid_ = true;
+}
+
+namespace {
+// Inverte a ordem dos 8 nibbles (pixels de 4 bpp) de uma linha de tile: flip horizontal.
+inline uint32_t reverse_nibbles(uint32_t b) {
+    b = ((b & 0x0F0F0F0Fu) << 4) | ((b >> 4) & 0x0F0F0F0Fu);
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+} // namespace
+
 void Ppu::render_text_bg(int bg, int line) {
     Io& io = gba_.io;
     const uint8_t* vram = gba_.bus.vram.data();
-    const uint8_t* pal = gba_.bus.palette.data();
+    refresh_bg_palette();
+    const uint16_t* pal4 = bg_pal4_.data();
+    const uint16_t* pal8 = bg_pal8_.data();
     const uint16_t cnt = io.reg(0x08 + bg * 2);
     const uint32_t char_base = ((cnt >> 2) & 3) * 0x4000;
     const uint32_t screen_base = ((cnt >> 8) & 31) * 0x800;
@@ -92,35 +114,47 @@ void Ppu::render_text_bg(int bg, int line) {
         int px = tx & 7;
         const int run = std::min(8 - px, kScreenW - x); // pixels deste tile nesta linha
 
+        uint16_t* dst = out + x;
         if (c256) {
             const uint32_t row = char_base + tile * 64 + py * 8;
             uint64_t row_bits = 0;
             if (row < 0x10000) std::memcpy(&row_bits, vram + row, 8);
-            if (row >= 0x10000 || row_bits == 0) { // fora da área de BG ou toda transparente
-                std::fill_n(out + x, run, uint16_t(0));
+            if (row_bits == 0) { // fora da área de BG ou toda transparente
+                std::fill_n(dst, run, uint16_t(0));
             } else {
-                for (int i = 0; i < run; ++i, ++px) {
-                    const uint32_t idx = vram[row + (hflip ? 7 - px : px)];
-                    out[x + i] = idx ? static_cast<uint16_t>((rd16(pal + idx * 2) & 0x7FFF) | kOpaque) : 0;
+                // Bytes na ordem de exibição (flip resolvido uma vez); índice 0 → 0 pela tabela.
+                const uint8_t* p = vram + row;
+                if (run == 8) {
+                    if (hflip) {
+                        for (int i = 0; i < 8; ++i) dst[i] = pal8[p[7 - i]];
+                    } else {
+                        for (int i = 0; i < 8; ++i) dst[i] = pal8[p[i]];
+                    }
+                } else {
+                    for (int i = 0; i < run; ++i, ++px) dst[i] = pal8[p[hflip ? 7 - px : px]];
                 }
             }
         } else {
             const uint32_t row = char_base + tile * 32 + py * 4;
-            if (row >= 0x10000) {
-                std::fill_n(out + x, run, uint16_t(0));
+            uint32_t bits = 0;
+            if (row < 0x10000) std::memcpy(&bits, vram + row, 4); // 8 pixels de 4 bits
+            if (bits == 0) { // fora da área de BG ou toda transparente (comum em HUD/céu)
+                std::fill_n(dst, run, uint16_t(0));
             } else {
-                uint32_t bits;
-                std::memcpy(&bits, vram + row, 4); // 8 pixels de 4 bits
-                const uint8_t* pal_bank = pal + (e >> 12) * 32;
-                if (bits == 0) { // linha de tile toda transparente (comum em HUD/céu)
-                    std::fill_n(out + x, run, uint16_t(0));
-                    x += run;
-                    continue;
-                }
-                for (int i = 0; i < run; ++i, ++px) {
-                    const int col = hflip ? 7 - px : px;
-                    const uint32_t idx = (bits >> (col * 4)) & 15;
-                    out[x + i] = idx ? static_cast<uint16_t>((rd16(pal_bank + idx * 2) & 0x7FFF) | kOpaque) : 0;
+                if (hflip) bits = reverse_nibbles(bits);
+                const uint16_t* bank = pal4 + (e >> 12) * 16;
+                if (run == 8) {
+                    dst[0] = bank[bits & 15];
+                    dst[1] = bank[(bits >> 4) & 15];
+                    dst[2] = bank[(bits >> 8) & 15];
+                    dst[3] = bank[(bits >> 12) & 15];
+                    dst[4] = bank[(bits >> 16) & 15];
+                    dst[5] = bank[(bits >> 20) & 15];
+                    dst[6] = bank[(bits >> 24) & 15];
+                    dst[7] = bank[bits >> 28];
+                } else {
+                    bits >>= px * 4;
+                    for (int i = 0; i < run; ++i, bits >>= 4) dst[i] = bank[bits & 15];
                 }
             }
         }
