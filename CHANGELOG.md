@@ -2,6 +2,14 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Launcher: title screen with the cover art, with Play, Settings, Select ROM… and Quit. Shows the
+  current ROM and whether it is the expected one; navigable with keyboard or gamepad.
+- Settings can be opened from the launcher; "Exit to launcher" in the in-game menu.
+- "Launcher at startup" option (`launcher = no` in `tlagba.ini` starts the game directly).
+
 ## [0.0.1] — 2026-11-25
 
 First public release. The whole game runs natively on PC through static recompilation.

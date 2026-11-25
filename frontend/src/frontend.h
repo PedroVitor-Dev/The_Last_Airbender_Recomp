@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,9 +37,13 @@ bool read_file(const fs::path& path, std::vector<uint8_t>& out);
 bool write_file(const fs::path& path, const std::vector<uint8_t>& data);
 void store_save(gba::Gba& g, const fs::path& path); // grava a EEPROM se mudou
 fs::path exe_dir();
+void load_save(gba::Gba& g, const fs::path& path); // lê a EEPROM (.sav), se existir
+// Carrega a ROM e monta o GBA (com o código recompilado, a menos que interp). nullptr + err se falhar.
+std::unique_ptr<gba::Gba> make_game(const fs::path& rom, bool interp, std::string& err);
 
 #ifdef _WIN32
-int run_window(gba::Gba& g, const Options& o, const fs::path& save_path);
+int run_window(gba::Gba& g, const Options& o, const fs::path& save_path); // tlagba: só o jogo
+int run_app(const Options& o);                                            // AvatarRecomp: launcher + jogo
 #endif
 
 } // namespace fe

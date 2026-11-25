@@ -1,6 +1,8 @@
-// Janela Win32 do tlagba: imagem com proporção correta (barras pretas), tela cheia sem borda,
-// pausa, turbo, capturas, save states com slots, teclado e gamepad configuráveis (tlagba.ini) e
-// a tela de configurações (menu.h), que congela o jogo enquanto está aberta.
+// Janela Win32 do frontend: imagem com proporção correta (barras pretas), tela cheia sem borda,
+// pausa, turbo, capturas, save states com slots, teclado e gamepad configuráveis (tlagba.ini), a
+// tela de configurações (que congela o jogo) e, no AvatarRecomp.exe, o launcher (menu.h).
+//
+// Uma Session guarda a janela, a configuração e as telas; o launcher e o jogo se revezam nela.
 
 #ifdef _WIN32
 
@@ -8,10 +10,14 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <cwctype>
+#include <functional>
+#include <memory>
 #include <string>
 
 #include "audio_out.h"
 #include "config.h"
+#include "core/rom.h"
 #include "frontend.h"
 #include "input_xinput.h"
 #include "menu.h"
@@ -20,7 +26,12 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commdlg.h>
 #include <timeapi.h>
+
+#ifndef TLA_VERSION
+#define TLA_VERSION "dev"
+#endif
 
 namespace fe {
 
@@ -30,7 +41,7 @@ using clock = std::chrono::steady_clock;
 
 const wchar_t* kTitle = L"Avatar: The Last Airbender Recomp v" TLA_VERSION;
 
-// Máscaras XInput usadas na navegação do menu (layout Xbox: A confirma, B volta).
+// Máscaras XInput usadas na navegação das telas (layout Xbox: A confirma, B volta).
 constexpr uint32_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
 constexpr uint32_t kPadStart = 0x0010, kPadBack = 0x0020, kPadA = 0x1000, kPadB = 0x2000;
 constexpr uint32_t kPadSticks = PAD_LS_UP | PAD_LS_DOWN | PAD_LS_LEFT | PAD_LS_RIGHT;
@@ -38,8 +49,10 @@ constexpr uint32_t kPadSticks = PAD_LS_UP | PAD_LS_DOWN | PAD_LS_LEFT | PAD_LS_R
 struct WinState {
     Config* cfg = nullptr;
     SettingsMenu* menu = nullptr;
+    Launcher* launcher = nullptr; // não nulo enquanto o launcher está na tela
     HWND hwnd = nullptr;
-    bool quit = false;
+    bool quit = false;  // janela fechada: encerra o programa
+    bool leave = false; // "Exit to launcher": encerra só a partida
     std::array<bool, 256> down{};
     bool paused = false;
     bool fullscreen = false;
@@ -94,10 +107,21 @@ bool in(const std::vector<int>& v, int vk) {
     return false;
 }
 
-// Teclado com o menu aberto: setas/Enter/Esc, e também as teclas mapeadas para o direcional e A/B.
+// Tecla → navegação nas telas: setas/Enter/Esc e também as teclas mapeadas para o direcional e A/B.
+bool key_nav(const Config& c, int vk, bool repeat, Nav& out) {
+    if (vk == VK_UP || in(c.keyboard[BTN_UP], vk)) out = Nav::Up;
+    else if (vk == VK_DOWN || in(c.keyboard[BTN_DOWN], vk)) out = Nav::Down;
+    else if (vk == VK_LEFT || in(c.keyboard[BTN_LEFT], vk)) out = Nav::Left;
+    else if (vk == VK_RIGHT || in(c.keyboard[BTN_RIGHT], vk)) out = Nav::Right;
+    else if (repeat) return false;
+    else if (vk == VK_RETURN || vk == VK_SPACE || in(c.keyboard[BTN_A], vk)) out = Nav::Confirm;
+    else if (vk == VK_ESCAPE || vk == VK_BACK || in(c.keyboard[BTN_B], vk)) out = Nav::Back;
+    else return false;
+    return true;
+}
+
 void menu_key(WinState& ws, int vk, bool repeat) {
     SettingsMenu& m = *ws.menu;
-    const Config& c = *ws.cfg;
     if (m.capturing_key()) {
         if (!repeat) m.captured_key(vk);
         return;
@@ -106,15 +130,13 @@ void menu_key(WinState& ws, int vk, bool repeat) {
         if (vk == VK_ESCAPE && !repeat) m.cancel_capture();
         return;
     }
-    using N = SettingsMenu::Nav;
-    if (vk == VK_UP || in(c.keyboard[BTN_UP], vk)) m.nav(N::Up);
-    else if (vk == VK_DOWN || in(c.keyboard[BTN_DOWN], vk)) m.nav(N::Down);
-    else if (vk == VK_LEFT || in(c.keyboard[BTN_LEFT], vk)) m.nav(N::Left);
-    else if (vk == VK_RIGHT || in(c.keyboard[BTN_RIGHT], vk)) m.nav(N::Right);
-    else if (repeat) return;
-    else if (vk == c.key_menu) m.nav(N::Back), m.nav(N::Back); // fecha de qualquer página
-    else if (vk == VK_RETURN || vk == VK_SPACE || in(c.keyboard[BTN_A], vk)) m.nav(N::Confirm);
-    else if (vk == VK_ESCAPE || vk == VK_BACK || in(c.keyboard[BTN_B], vk)) m.nav(N::Back);
+    if (vk == ws.cfg->key_menu && !repeat) { // fecha de qualquer página
+        m.nav(Nav::Back);
+        m.nav(Nav::Back);
+        return;
+    }
+    Nav n;
+    if (key_nav(*ws.cfg, vk, repeat, n)) m.nav(n);
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -126,7 +148,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const int vk = static_cast<int>(wp) & 0xFF;
         const bool repeat = (lp >> 30) & 1;
         const bool alt = (lp >> 29) & 1;
-        if (vk == VK_RETURN && alt) { // Alt+Enter
+        const Config& c = *ws->cfg;
+        if ((vk == VK_RETURN && alt) || (vk == c.key_fullscreen && vk != VK_RETURN)) {
             if (!repeat) ws->req_fullscreen = true;
             return 0;
         }
@@ -134,7 +157,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             menu_key(*ws, vk, repeat);
             return 0;
         }
-        const Config& c = *ws->cfg;
+        if (ws->launcher) {
+            Nav n;
+            if (key_nav(c, vk, repeat, n)) ws->launcher->nav(n);
+            else if (vk == c.key_menu && !repeat) ws->req_menu = true;
+            return 0;
+        }
         if (!repeat && (vk == VK_ESCAPE || vk == c.key_menu)) {
             ws->req_menu = true;
             return 0;
@@ -146,7 +174,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             else if (vk == c.key_slot_prev) ws->slot_delta -= 1;
             else if (vk == c.key_slot_next) ws->slot_delta += 1;
             else if (vk == c.key_pause) ws->paused = !ws->paused;
-            else if (vk == c.key_fullscreen) ws->req_fullscreen = true;
             else if (vk == c.key_screenshot) ws->req_shot = true;
         }
         if (msg == WM_SYSKEYDOWN && vk != VK_F4) return 0; // F10/Alt não abrem o menu do sistema
@@ -171,8 +198,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// Desenha a imagem (src_w×src_h, 3:2) com a maior escala que cabe, barras pretas no resto, e uma
-// mensagem de status (se houver) no canto.
+// Desenha a imagem (3:2) com a maior escala que cabe, barras pretas no resto, e uma mensagem de
+// status (se houver) no canto.
 void draw(HDC dc, HWND hwnd, const uint32_t* pixels, const BITMAPINFO& bmi, const std::wstring& status) {
     RECT rc;
     GetClientRect(hwnd, &rc);
@@ -240,269 +267,451 @@ struct PadRepeat {
     }
 };
 
-} // namespace
+// Navegação pelo controle numa tela (direcional/analógico com repetição, A confirma, B volta).
+template <class Target>
+void pad_nav(Target& t, PadRepeat& rep, uint32_t raw, uint32_t pressed) {
+    const uint32_t dirs = rep.step(raw & (kPadUp | kPadDown | kPadLeft | kPadRight | kPadSticks));
+    if (dirs & (kPadUp | PAD_LS_UP)) t.nav(Nav::Up);
+    if (dirs & (kPadDown | PAD_LS_DOWN)) t.nav(Nav::Down);
+    if (dirs & (kPadLeft | PAD_LS_LEFT)) t.nav(Nav::Left);
+    if (dirs & (kPadRight | PAD_LS_RIGHT)) t.nav(Nav::Right);
+    if (pressed & kPadA) t.nav(Nav::Confirm);
+    if (pressed & kPadB) t.nav(Nav::Back);
+}
 
-int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
-    const fs::path ini = exe_dir() / "tlagba.ini";
-    std::vector<std::string> warnings;
-    Config cfg = load_config(ini, warnings);
-    for (const auto& w : warnings) std::fprintf(stderr, "warning: %s\n", w.c_str());
+bool rom_ok(const fs::path& p) {
+    std::error_code ec;
+    if (p.empty() || !fs::is_regular_file(p, ec)) return false;
+    auto rom = core::Rom::load(p);
+    return rom && rom->is_supported();
+}
 
+// Um .gba compatível ao lado do executável ou em roms\.
+fs::path find_rom_nearby() {
+    const fs::path base = exe_dir();
+    for (const fs::path& dir : {base, base / "roms", base / "rom"}) {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            std::wstring ext = e.path().extension().wstring();
+            for (auto& ch : ext) ch = static_cast<wchar_t>(std::towlower(ch));
+            if (ext == L".gba" && rom_ok(e.path())) return e.path();
+        }
+    }
+    return {};
+}
+
+fs::path ask_for_rom(HWND owner) {
+    wchar_t file[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof ofn;
+    ofn.hwndOwner = owner;
+    ofn.lpstrTitle = L"Select your Avatar: The Last Airbender (USA) GBA ROM";
+    ofn.lpstrFilter = L"GBA ROM (*.gba)\0*.gba\0All files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    return GetOpenFileNameW(&ofn) ? fs::path(file) : fs::path();
+}
+
+// ─────────────────────────────────────────────────────────────── Session ──
+
+struct Session {
+    const Options& o;
+    fs::path ini = exe_dir() / "tlagba.ini";
+    Config cfg;
     int slot = 1;
-    SettingsMenu menu(cfg, slot);
+    SettingsMenu menu{cfg, slot};
     WinState ws;
-    ws.cfg = &cfg;
-    ws.menu = &menu;
-    g_ws = &ws;
+    HDC dc = nullptr;
+    // Controle: estado anterior (para bordas) e botões a ignorar até serem soltos (os que
+    // estavam segurados ao sair de uma tela, para não vazarem para o jogo).
+    uint32_t pad_prev = 0, pad_suppress = 0;
 
-    const fs::path rom_dir = fs::absolute(o.rom).parent_path();
-    const std::string stem = o.rom.stem().string();
-    auto slot_path = [&](int s) { return rom_dir / "states" / (stem + ".slot" + std::to_string(s) + ".state"); };
+    explicit Session(const Options& opts) : o(opts) {
+        std::vector<std::string> warnings;
+        cfg = load_config(ini, warnings);
+        for (const auto& w : warnings) std::fprintf(stderr, "warning: %s\n", w.c_str());
+        ws.cfg = &cfg;
+        ws.menu = &menu;
+        g_ws = &ws;
 
-    HINSTANCE inst = GetModuleHandleW(nullptr);
-    WNDCLASSW wc{};
-    wc.lpfnWndProc = wnd_proc;
-    wc.hInstance = inst;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1)); // ícone do app.rc
-    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
-    wc.lpszClassName = L"TlaRecomp";
-    RegisterClassW(&wc);
-    const int scale = o.scale > 0 ? o.scale : cfg.scale;
-    RECT rc{0, 0, gba::kScreenW * scale, gba::kScreenH * scale};
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-    ws.hwnd = CreateWindowW(wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-                            rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
-    if (cfg.fullscreen) set_fullscreen(ws, true);
-    HDC dc = GetDC(ws.hwnd);
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = gba::kScreenW;
-    bmi.bmiHeader.biHeight = -gba::kScreenH;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
+        HINSTANCE inst = GetModuleHandleW(nullptr);
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = wnd_proc;
+        wc.hInstance = inst;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1)); // ícone do app.rc
+        wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+        wc.lpszClassName = L"TlaRecomp";
+        RegisterClassW(&wc);
+        const int scale = o.scale > 0 ? o.scale : cfg.scale;
+        RECT rc{0, 0, gba::kScreenW * scale, gba::kScreenH * scale};
+        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+        ws.hwnd = CreateWindowW(wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
+                                CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
+        if (cfg.fullscreen) set_fullscreen(ws, true);
+        dc = GetDC(ws.hwnd);
+        timeBeginPeriod(1);
+    }
 
-    // O áudio continua ativo mesmo com volume 0: ele é o relógio do laço de quadros.
-    auto audio = o.mute ? nullptr : AudioOut::create(gba::Apu::kSampleRate);
-    timeBeginPeriod(1);
-    const auto frame_time = std::chrono::nanoseconds(16742706); // 59,7275 Hz
-    const auto started = clock::now();
-    auto next = started;
-    const uint64_t max_frames = o.frames_given ? o.frames : 0;
+    ~Session() {
+        timeEndPeriod(1);
+        persist_config();
+        g_ws = nullptr;
+        ReleaseDC(ws.hwnd, dc);
+        DestroyWindow(ws.hwnd);
+    }
 
-    std::wstring status;
-    clock::time_point status_until{};
-    auto say = [&](const std::string& s) {
-        status = widen(s);
-        status_until = clock::now() + std::chrono::seconds(3);
-    };
-    say(std::string(key_name(cfg.key_menu)) + ", Esc or Xbox/home button: settings");
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
 
-    auto pump = [&] {
+    void pump() {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-    };
-    auto current_status = [&]() -> std::wstring {
-        if (ws.paused) return L"Paused (" + widen(key_name(cfg.key_pause)) + L" resumes)";
-        return clock::now() < status_until ? status : std::wstring();
-    };
+    }
 
-    auto persist_config = [&] {
+    void persist_config() {
         if (!menu.config_dirty()) return;
         menu.clear_dirty();
         if (!save_config(ini, cfg)) std::fprintf(stderr, "warning: could not write %s\n", ini.string().c_str());
-    };
+    }
 
-    auto load_slot = [&](int s) {
-        std::vector<uint8_t> bytes;
-        if (!read_file(slot_path(s), bytes)) {
-            say("Slot " + std::to_string(s) + " is empty");
-            return false;
-        }
-        try {
-            say("State loaded from slot " + std::to_string(s));
-            g.load_state_and_restart(bytes); // não retorna: recomeça a partir do estado
-        } catch (const std::runtime_error& e) {
-            say(std::string("Could not load: ") + e.what());
-        }
-        return false;
-    };
-    auto save_slot = [&](int s) {
-        const fs::path p = slot_path(s);
-        fs::create_directories(p.parent_path());
-        return write_file(p, g.save_state());
-    };
+    void toggle_fullscreen_saved() {
+        set_fullscreen(ws, !ws.fullscreen);
+        cfg.fullscreen = ws.fullscreen;
+        save_config(ini, cfg);
+    }
 
-    // Ações que valem com o jogo rodando ou pausado. Carregar estado desempilha (não retorna).
-    auto handle_requests = [&] {
-        if (ws.req_fullscreen) ws.req_fullscreen = false, set_fullscreen(ws, !ws.fullscreen);
-        if (ws.slot_delta) {
-            slot = ((slot + ws.slot_delta) % 10 + 10) % 10;
-            ws.slot_delta = 0;
-            say("Slot " + std::to_string(slot) + (fs::exists(slot_path(slot)) ? "" : " (empty)"));
-        }
-        if (ws.req_shot) {
-            ws.req_shot = false;
-            const fs::path p = rom_dir / "screenshots" / (stem + "_" + timestamp() + ".png");
-            fs::create_directories(p.parent_path());
-            say(png::write_rgb(p.string(), g.frame().data(), gba::kScreenW, gba::kScreenH)
-                    ? "Screenshot saved: " + p.filename().string()
-                    : "Could not save the screenshot");
-        }
-        if (ws.req_save) {
-            ws.req_save = false;
-            say(save_slot(slot) ? "State saved to slot " + std::to_string(slot) : "Could not save the state");
-        }
-        if (ws.req_load) {
-            ws.req_load = false;
-            load_slot(slot);
-        }
-    };
+    // Lê o controle e devolve os botões que acabaram de ser apertados.
+    uint32_t poll(uint32_t& raw) {
+        raw = poll_pad_raw(cfg.deadzone);
+        const uint32_t pressed = raw & ~pad_prev;
+        pad_prev = raw;
+        pad_suppress &= raw;
+        return pressed;
+    }
 
-    // Controle: estado anterior (para bordas) e botões a ignorar até serem soltos (os que
-    // estavam segurados ao fechar o menu, para não vazarem para o jogo).
-    uint32_t pad_prev = 0, pad_suppress = 0;
+    // Ao sair de uma tela: o que está segurado não conta para a próxima.
+    void settle_inputs() {
+        ws.down.fill(false);
+        pad_prev = poll_pad_raw(cfg.deadzone);
+        pad_suppress = pad_prev;
+    }
 
-    // Tela de configurações. A emulação fica parada aqui dentro (o jogo congela); a janela e o
-    // controle continuam sendo atendidos.
-    auto run_menu = [&] {
+    // Laço da tela de configurações. Com jogo (g não nulo), desenha sobre o quadro congelado e
+    // trata save states e "sair"; no launcher, desenha sobre a arte de fundo. Devolve a ação que
+    // fechou a tela (Resume, Quit ou LoadState).
+    SettingsMenu::Action run_settings(gba::Gba* g, const uint32_t* background,
+                                      const std::function<bool(int)>& save_slot,
+                                      const std::function<bool(int)>& slot_exists) {
         ws.req_menu = false;
-        const std::array<uint32_t, gba::kScreenW * gba::kScreenH> frozen = g.frame();
-        menu.show();
+        std::array<uint32_t, gba::kScreenW * gba::kScreenH> frozen{};
+        if (g) frozen = g->frame();
+        menu.show(g != nullptr);
         PadRepeat rep;
-        uint32_t prev = poll_pad_raw(cfg.deadzone); // o que já está apertado não conta como novo
-        auto close = [&] {
-            menu.hide();
-            persist_config();
-            ws.down.fill(false);
-            pad_prev = poll_pad_raw(cfg.deadzone);
-            pad_suppress = pad_prev;
-            next = clock::now();
-        };
+        uint32_t raw = 0;
+        poll(raw); // o que já está apertado não conta como novo
+        using A = SettingsMenu::Action;
+        A result = A::Resume;
         while (!ws.quit) {
             pump();
-            handle_requests(); // Alt+Enter continua valendo
-            const uint32_t raw = poll_pad_raw(cfg.deadzone);
-            const uint32_t pressed = raw & ~prev;
-            prev = raw;
+            if (ws.req_fullscreen) ws.req_fullscreen = false, toggle_fullscreen_saved();
+            const uint32_t pressed = poll(raw);
             if (menu.capturing_pad()) {
                 const uint32_t cand = pressed & ~kPadSticks;
                 if (cand) menu.captured_pad(cand & (~cand + 1)); // o bit mais baixo pressionado
             } else if (pad_menu_combo(raw, pressed)) {
-                close();
-                return;
+                break;
             } else {
-                using N = SettingsMenu::Nav;
-                const uint32_t dirs = rep.step(raw & (kPadUp | kPadDown | kPadLeft | kPadRight | kPadSticks));
-                if (dirs & (kPadUp | PAD_LS_UP)) menu.nav(N::Up);
-                if (dirs & (kPadDown | PAD_LS_DOWN)) menu.nav(N::Down);
-                if (dirs & (kPadLeft | PAD_LS_LEFT)) menu.nav(N::Left);
-                if (dirs & (kPadRight | PAD_LS_RIGHT)) menu.nav(N::Right);
-                if (pressed & kPadA) menu.nav(N::Confirm);
-                if (pressed & kPadB) menu.nav(N::Back);
+                pad_nav(menu, rep, raw, pressed);
             }
 
-            using A = SettingsMenu::Action;
-            switch (menu.take_action()) {
-            case A::Resume: close(); return;
-            case A::Quit: close(); ws.quit = true; return;
-            case A::SaveState:
-                menu.set_status(save_slot(slot) ? "State saved to slot " + std::to_string(slot)
-                                                : "Could not save the state");
+            const A a = menu.take_action();
+            if (a == A::Resume) break;
+            if (a == A::Quit) {
+                result = a;
                 break;
-            case A::LoadState:
-                if (!fs::exists(slot_path(slot))) {
-                    menu.set_status("Slot " + std::to_string(slot) + " is empty");
+            }
+            if (a == A::LoadState) {
+                if (slot_exists(slot)) {
+                    result = a;
                     break;
                 }
-                close();
-                load_slot(slot); // em caso de sucesso, não retorna
-                return;
-            case A::ToggleFullscreen:
-                set_fullscreen(ws, !ws.fullscreen);
-                cfg.fullscreen = ws.fullscreen;
-                save_config(ini, cfg);
-                break;
-            case A::ApplyScale: apply_scale(ws, cfg.scale); break;
-            case A::ApplyVolume: case A::None: break;
+                menu.set_status("Slot " + std::to_string(slot) + " is empty");
             }
+            if (a == A::SaveState)
+                menu.set_status(save_slot(slot) ? "State saved to slot " + std::to_string(slot)
+                                                : "Could not save the state");
+            if (a == A::ToggleFullscreen) toggle_fullscreen_saved();
+            if (a == A::ApplyScale) apply_scale(ws, cfg.scale);
 
             menu.set_fullscreen_flag(ws.fullscreen);
-            menu.set_slot_exists(fs::exists(slot_path(slot)));
-            draw(dc, ws.hwnd, menu.render(frozen.data()), menu.bitmap_info(), {});
+            if (g) menu.set_slot_exists(slot_exists(slot));
+            draw(dc, ws.hwnd, g ? menu.render(frozen.data()) : menu.render_over(background), menu.bitmap_info(), {});
             Sleep(15);
         }
-        close();
-    };
+        menu.hide();
+        persist_config();
+        settle_inputs();
+        return result;
+    }
 
-    std::vector<int16_t> scaled;
-    g.run([&] {
-        pump();
-        if (ws.quit) return false;
-        uint32_t raw = poll_pad_raw(cfg.deadzone);
-        const uint32_t pressed = raw & ~pad_prev;
-        pad_prev = raw;
-        pad_suppress &= raw;
-        if (pad_menu_combo(raw, pressed)) ws.req_menu = true;
-        if (ws.req_menu) {
-            run_menu();
-            if (ws.quit) return false;
-            raw = pad_prev;
-        }
-        handle_requests();
-        draw(dc, ws.hwnd, g.frame().data(), bmi, current_status());
+    // Uma partida. Devolve true se a janela foi fechada (encerrar o programa); false se o jogador
+    // voltou ao launcher.
+    bool play(gba::Gba& g, const fs::path& save_path, bool app) {
+        ws.leave = false;
+        ws.paused = false;
+        ws.req_menu = false;
+        menu.set_quit_label(app ? L"Exit to launcher" : L"Quit game");
+        settle_inputs();
 
-        // Pausa: a emulação fica parada aqui dentro; janela, atalhos e save states seguem.
-        while (ws.paused && !ws.quit && !ws.req_menu) {
-            Sleep(15);
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = gba::kScreenW;
+        bmi.bmiHeader.biHeight = -gba::kScreenH;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        const fs::path rom_dir = fs::absolute(save_path).parent_path();
+        const std::wstring stem = save_path.stem().wstring();
+        auto slot_path = [&](int s) {
+            return rom_dir / "states" / (stem + L".slot" + std::to_wstring(s) + L".state");
+        };
+        const std::function<bool(int)> slot_exists = [&](int s) { return fs::exists(slot_path(s)); };
+        const std::function<bool(int)> save_slot = [&](int s) {
+            const fs::path p = slot_path(s);
+            fs::create_directories(p.parent_path());
+            return write_file(p, g.save_state());
+        };
+
+        // O áudio continua ativo mesmo com volume 0: ele é o relógio do laço de quadros.
+        auto audio = o.mute ? nullptr : AudioOut::create(gba::Apu::kSampleRate);
+        const auto frame_time = std::chrono::nanoseconds(16742706); // 59,7275 Hz
+        const auto started = clock::now();
+        const uint64_t first_frame = g.frame_count;
+        auto next = started;
+        const uint64_t max_frames = o.frames_given ? o.frames : 0;
+
+        std::wstring status;
+        clock::time_point status_until{};
+        auto say = [&](const std::string& s) {
+            status = widen(s);
+            status_until = clock::now() + std::chrono::seconds(3);
+        };
+        say(std::string(key_name(cfg.key_menu)) + ", Esc or Xbox/home button: settings");
+        auto current_status = [&]() -> std::wstring {
+            if (ws.paused) return L"Paused (" + widen(key_name(cfg.key_pause)) + L" resumes)";
+            return clock::now() < status_until ? status : std::wstring();
+        };
+
+        auto load_slot = [&](int s) {
+            std::vector<uint8_t> bytes;
+            if (!read_file(slot_path(s), bytes)) {
+                say("Slot " + std::to_string(s) + " is empty");
+                return;
+            }
+            try {
+                say("State loaded from slot " + std::to_string(s));
+                g.load_state_and_restart(bytes); // não retorna: recomeça a partir do estado
+            } catch (const std::runtime_error& e) {
+                say(std::string("Could not load: ") + e.what());
+            }
+        };
+
+        // Ações que valem com o jogo rodando ou pausado. Carregar estado desempilha (não retorna).
+        auto handle_requests = [&] {
+            if (ws.req_fullscreen) ws.req_fullscreen = false, set_fullscreen(ws, !ws.fullscreen);
+            if (ws.slot_delta) {
+                slot = ((slot + ws.slot_delta) % 10 + 10) % 10;
+                ws.slot_delta = 0;
+                say("Slot " + std::to_string(slot) + (slot_exists(slot) ? "" : " (empty)"));
+            }
+            if (ws.req_shot) {
+                ws.req_shot = false;
+                const fs::path p = rom_dir / "screenshots" / (stem + L"_" + widen(timestamp()) + L".png");
+                fs::create_directories(p.parent_path());
+                const std::u8string name = p.filename().u8string();
+                say(png::write_rgb(p.string(), g.frame().data(), gba::kScreenW, gba::kScreenH)
+                        ? "Screenshot saved: " + std::string(name.begin(), name.end())
+                        : "Could not save the screenshot");
+            }
+            if (ws.req_save) {
+                ws.req_save = false;
+                say(save_slot(slot) ? "State saved to slot " + std::to_string(slot) : "Could not save the state");
+            }
+            if (ws.req_load) {
+                ws.req_load = false;
+                load_slot(slot);
+            }
+        };
+
+        std::vector<int16_t> scaled;
+        g.run([&] {
             pump();
+            if (ws.quit || ws.leave) return false;
+            uint32_t raw = 0;
+            const uint32_t pressed = poll(raw);
+            if (pad_menu_combo(raw, pressed)) ws.req_menu = true;
+            if (ws.req_menu) {
+                using A = SettingsMenu::Action;
+                const A a = run_settings(&g, nullptr, save_slot, slot_exists);
+                next = clock::now();
+                if (a == A::Quit) {
+                    if (app) ws.leave = true;
+                    else ws.quit = true;
+                }
+                if (ws.quit || ws.leave) return false;
+                if (a == A::LoadState) load_slot(slot); // em caso de sucesso, não retorna
+                raw = pad_prev;
+            }
             handle_requests();
             draw(dc, ws.hwnd, g.frame().data(), bmi, current_status());
-            next = clock::now();
-        }
-        if (ws.quit) return false;
 
-        if (g.frame_count % 60 == 0) store_save(g, save_path);
-        auto samples = g.apu.take_samples();
-        const bool turbo = cfg.key_turbo && ws.down[cfg.key_turbo];
-        if (turbo) {
-            next = clock::now(); // sem limite de velocidade; o áudio acelerado é descartado
-        } else if (audio) {
-            if (cfg.volume < 100) {
-                scaled.resize(samples.size());
-                const int v = cfg.volume;
-                for (size_t i = 0; i < samples.size(); ++i) scaled[i] = static_cast<int16_t>(samples[i] * v / 100);
-                audio->submit(scaled);
-            } else {
-                audio->submit(samples);
+            // Pausa: a emulação fica parada aqui dentro; janela, atalhos e save states seguem.
+            while (ws.paused && !ws.quit && !ws.req_menu) {
+                Sleep(15);
+                pump();
+                handle_requests();
+                draw(dc, ws.hwnd, g.frame().data(), bmi, current_status());
+                next = clock::now();
             }
-            while (audio->queued() > 3) Sleep(1); // áudio como relógio: ~3 quadros na fila
-        } else {
-            next += frame_time;
-            const auto now = clock::now();
-            if (next > now)
-                Sleep(static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(next - now).count()));
-            else if (now - next > frame_time * 5)
-                next = now;
-        }
-        g.set_keys(static_cast<uint16_t>(keyboard_keys(ws) | pad_to_gba(cfg, raw & ~pad_suppress)));
-        return !max_frames || g.frame_count < max_frames;
-    });
+            if (ws.quit) return false;
 
-    timeEndPeriod(1);
-    const double secs = std::chrono::duration<double>(clock::now() - started).count();
-    std::printf("%llu frames in %.2f s (%.2f fps, target 59.73)%s, %s mode\n",
-                static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
-                audio ? ", paced by audio" : "", g.has_recomp() ? "recompiled" : "interpreter");
-    persist_config();
-    g_ws = nullptr;
-    ReleaseDC(ws.hwnd, dc);
-    DestroyWindow(ws.hwnd);
-    store_save(g, save_path);
+            if (g.frame_count % 60 == 0) store_save(g, save_path);
+            auto samples = g.apu.take_samples();
+            const bool turbo = cfg.key_turbo && ws.down[cfg.key_turbo];
+            if (turbo) {
+                next = clock::now(); // sem limite de velocidade; o áudio acelerado é descartado
+            } else if (audio) {
+                if (cfg.volume < 100) {
+                    scaled.resize(samples.size());
+                    const int v = cfg.volume;
+                    for (size_t i = 0; i < samples.size(); ++i) scaled[i] = static_cast<int16_t>(samples[i] * v / 100);
+                    audio->submit(scaled);
+                } else {
+                    audio->submit(samples);
+                }
+                while (audio->queued() > 3) Sleep(1); // áudio como relógio: ~3 quadros na fila
+            } else {
+                next += frame_time;
+                const auto now = clock::now();
+                if (next > now)
+                    Sleep(static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(next - now).count()));
+                else if (now - next > frame_time * 5)
+                    next = now;
+            }
+            g.set_keys(static_cast<uint16_t>(keyboard_keys(ws) | pad_to_gba(cfg, raw & ~pad_suppress)));
+            return !max_frames || g.frame_count < max_frames;
+        });
+
+        const double secs = std::chrono::duration<double>(clock::now() - started).count();
+        const uint64_t frames = g.frame_count - first_frame;
+        std::printf("%llu frames in %.2f s (%.2f fps, target 59.73)%s, %s mode\n",
+                    static_cast<unsigned long long>(frames), secs, frames / secs, audio ? ", paced by audio" : "",
+                    g.has_recomp() ? "recompiled" : "interpreter");
+        store_save(g, save_path);
+        return ws.quit;
+    }
+
+    // Launcher: devolve true para jogar a ROM em `rom`, false para sair.
+    bool run_launcher(Launcher& l, fs::path& rom) {
+        ws.launcher = &l;
+        ws.req_menu = false;
+        auto show_rom = [&] { l.set_rom(rom.empty() ? std::wstring() : rom.filename().wstring(), rom_ok(rom)); };
+        show_rom();
+        settle_inputs();
+        PadRepeat rep;
+        bool start = false;
+        const std::function<bool(int)> no_slot = [](int) { return false; };
+        auto open_settings = [&] {
+            ws.launcher = nullptr;
+            run_settings(nullptr, l.background(), no_slot, no_slot);
+            ws.launcher = &l;
+        };
+        while (!ws.quit) {
+            pump();
+            if (ws.req_fullscreen) ws.req_fullscreen = false, toggle_fullscreen_saved();
+            uint32_t raw = 0;
+            const uint32_t pressed = poll(raw);
+            if (ws.req_menu || pad_menu_combo(raw, pressed)) open_settings();
+            else pad_nav(l, rep, raw, pressed);
+
+            using A = Launcher::Action;
+            const A a = l.take_action();
+            if (a == A::Play) {
+                start = true;
+                break;
+            }
+            if (a == A::Quit) break;
+            if (a == A::Settings) open_settings();
+            if (a == A::SelectRom) {
+                const bool was_full = ws.fullscreen;
+                if (was_full) set_fullscreen(ws, false); // a janela de arquivos não fica por trás
+                const fs::path chosen = ask_for_rom(ws.hwnd);
+                if (was_full) set_fullscreen(ws, true);
+                settle_inputs();
+                if (!chosen.empty()) {
+                    if (rom_ok(chosen)) {
+                        rom = chosen;
+                        cfg.rom = rom;
+                        save_config(ini, cfg);
+                        show_rom();
+                        l.set_status("ROM verified. Ready to play!");
+                    } else {
+                        l.set_status("That file is not the expected ROM (Avatar, USA, BQZE)");
+                    }
+                }
+            }
+            if (ws.quit) break;
+            draw(dc, ws.hwnd, l.render(), l.bitmap_info(), {});
+            Sleep(15);
+        }
+        ws.launcher = nullptr;
+        settle_inputs();
+        return start && !ws.quit;
+    }
+};
+
+} // namespace
+
+// tlagba: só a partida, sem launcher.
+int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
+    Session s(o);
+    s.play(g, save_path, false);
+    return 0;
+}
+
+// AvatarRecomp.exe: launcher ⇄ jogo, na mesma janela.
+int run_app(const Options& o) {
+    Session s(o);
+    fs::path rom = o.rom;
+    if (!rom_ok(rom)) rom = rom_ok(s.cfg.rom) ? s.cfg.rom : find_rom_nearby();
+    if (rom_ok(rom) && rom != s.cfg.rom) {
+        s.cfg.rom = rom;
+        save_config(s.ini, s.cfg);
+    }
+    if (rom.empty()) rom = o.rom; // ROM inválida arrastada: o launcher mostra o problema
+
+    Launcher launcher;
+    bool skip = !s.cfg.launcher && rom_ok(rom); // "Launcher at startup: Off" vale só ao abrir
+    while (!s.ws.quit) {
+        if (!skip && !s.run_launcher(launcher, rom)) break;
+        skip = false;
+        std::string err;
+        auto g = make_game(rom, false, err);
+        if (!g) {
+            launcher.set_status("Could not start: " + err);
+            continue;
+        }
+        fs::path save_path = rom;
+        save_path.replace_extension(".sav");
+        load_save(*g, save_path);
+        if (s.play(*g, save_path, true)) break;
+    }
     return 0;
 }
 

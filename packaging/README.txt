@@ -11,10 +11,11 @@ USA cartridge (game code BQZE, SHA-1 9d864e9b3ccce4e5e1b1c566afa0d06088e88dfd).
 HOW TO PLAY
 -----------
 1. Copy your ROM (.gba) into the "roms" folder next to AvatarRecomp.exe.
-2. Run AvatarRecomp.exe.
+2. Run AvatarRecomp.exe and choose Play in the launcher.
 
-You can also drag the ROM onto AvatarRecomp.exe, or just run it and pick the
-ROM in the window that opens. The choice is remembered.
+The launcher finds and verifies the ROM by itself. You can also drag the ROM
+onto AvatarRecomp.exe, or use "Select ROM..." in the launcher; the choice is
+remembered. To skip the launcher, turn off "Launcher at startup" in Settings.
 
 Windows may show a SmartScreen warning because the program is not signed:
 click "More info" and then "Run anyway".

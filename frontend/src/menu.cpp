@@ -5,6 +5,12 @@
 #include <algorithm>
 #include <string>
 
+#include <wincodec.h>
+
+#ifndef TLA_VERSION
+#define TLA_VERSION "dev"
+#endif
+
 namespace fe {
 
 namespace {
@@ -17,22 +23,36 @@ constexpr COLORREF kBorderDark = RGB(0x6B, 0x39, 0x31); // borda escura
 constexpr COLORREF kBrown = RGB(0x5A, 0x29, 0x18);      // marrom da tela de nome
 constexpr COLORREF kBrownMid = RGB(0x9C, 0x6B, 0x31);   // valores
 constexpr COLORREF kInk = RGB(0x2A, 0x14, 0x08);        // texto
+constexpr COLORREF kFaded = RGB(0xB0, 0x88, 0x6C);      // item indisponível
 constexpr COLORREF kCream = RGB(0xFF, 0xF7, 0xBD);      // texto do título ("NEW GAME")
 constexpr COLORREF kRed = RGB(0xBD, 0x21, 0x00);        // detalhe vermelho da borda
+constexpr COLORREF kSky = RGB(0x8C, 0xB5, 0xFF);        // contorno azul do título
+constexpr COLORREF kWarn = RGB(0xFF, 0x9C, 0x7B);
 
+constexpr int kW = Canvas::kW, kH = Canvas::kH;
 constexpr int kPanelL = 40, kPanelT = 12, kPanelR = 440, kPanelB = 308;
-constexpr int kRowsTop = 58, kRowH = 20;
+constexpr int kRowsTop = 58, kFootTop = kPanelB - 28;
 
 // Ordem dos botões nas páginas de remapeamento.
 constexpr int kButtonOrder[BTN_COUNT] = {BTN_A, BTN_B, BTN_L, BTN_R, BTN_START, BTN_SELECT, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT};
 const wchar_t* kButtonLabel[BTN_COUNT] = {L"A Button", L"B Button", L"Select", L"Start", L"Right", L"Left",
                                            L"Up", L"Down", L"R Button", L"L Button"};
 
-enum MainRow { M_RESUME, M_SAVE, M_LOAD, M_FULLSCREEN, M_SCALE, M_VOLUME, M_ANALOG, M_KEYBOARD, M_PAD, M_DEFAULTS, M_QUIT, M_COUNT };
+enum MainRow {
+    M_RESUME, M_SAVE, M_LOAD, M_FULLSCREEN, M_SCALE, M_VOLUME, M_ANALOG, M_LAUNCHER, M_KEYBOARD, M_PAD,
+    M_DEFAULTS, M_QUIT, M_COUNT
+};
 
 std::wstring widen(const char* s) {
     std::wstring w;
     for (; *s; ++s) w.push_back(static_cast<wchar_t>(static_cast<unsigned char>(*s)));
+    return w;
+}
+
+std::wstring from_utf8(const std::string& s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
     return w;
 }
 
@@ -56,9 +76,72 @@ HFONT make_font(int height, int weight, const wchar_t* face) {
                        CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY, DEFAULT_PITCH, face);
 }
 
+// Moldura no estilo da caixa de diálogo do jogo: preto, marrom escuro, marrom claro, pêssego.
+void dialog_box(HDC dc, int l, int t, int r, int b) {
+    fill(dc, l, t, r, b, RGB(0, 0, 0));
+    fill(dc, l + 2, t + 2, r - 2, b - 2, kBorderDark);
+    fill(dc, l + 5, t + 5, r - 5, b - 5, kBorderMid);
+    fill(dc, l + 7, t + 7, r - 7, b - 7, kPeach);
+}
+
+// Escurece uma faixa de pixels (para barras sobre a arte do launcher).
+void shade(uint32_t* bits, int t, int b, int keep_of_10) {
+    for (int y = t; y < b; ++y)
+        for (int x = 0; x < kW; ++x) {
+            const uint32_t p = bits[y * kW + x];
+            const uint32_t r = ((p >> 16) & 0xFF) * keep_of_10 / 10, g = ((p >> 8) & 0xFF) * keep_of_10 / 10,
+                           bl = (p & 0xFF) * keep_of_10 / 10;
+            bits[y * kW + x] = r << 16 | g << 8 | bl;
+        }
+}
+
+// Arte de fundo do launcher: JPEG 480×320 embutido no executável (recurso 2), decodificado com
+// o WIC do Windows. Sem o recurso, um degradê no tom do céu da capa.
+std::vector<uint32_t> load_background() {
+    std::vector<uint32_t> px(static_cast<size_t>(kW) * kH);
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x)
+            px[static_cast<size_t>(y) * kW + x] = (0x60 + y / 6) << 16 | (0x20 + y / 10) << 8 | 0x18;
+
+    HMODULE mod = GetModuleHandleW(nullptr);
+    HRSRC res = FindResourceW(mod, MAKEINTRESOURCEW(2), MAKEINTRESOURCEW(10)); // RT_RCDATA
+    if (!res) return px;
+    const void* data = LockResource(LoadResource(mod, res));
+    const DWORD size = SizeofResource(mod, res);
+    if (!data || !size) return px;
+
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* conv = nullptr;
+    UINT w = 0, h = 0;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromMemory(static_cast<BYTE*>(const_cast<void*>(data)), size)) &&
+        SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&w, &h)) && w == kW && h == kH &&
+        SUCCEEDED(factory->CreateFormatConverter(&conv)) &&
+        SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                   WICBitmapPaletteTypeCustom))) {
+        conv->CopyPixels(nullptr, kW * 4, static_cast<UINT>(px.size() * 4), reinterpret_cast<BYTE*>(px.data()));
+    }
+    if (conv) conv->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (stream) stream->Release();
+    if (factory) factory->Release();
+    if (SUCCEEDED(co)) CoUninitialize();
+    for (auto& p : px) p &= 0xFFFFFF;
+    return px;
+}
+
 } // namespace
 
-SettingsMenu::SettingsMenu(Config& cfg, int& slot) : cfg_(cfg), slot_(slot) {
+// ───────────────────────────────────────────────────────────────── Canvas ──
+
+Canvas::Canvas() {
     bmi_.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi_.bmiHeader.biWidth = kW;
     bmi_.bmiHeader.biHeight = -kH; // de cima para baixo
@@ -76,7 +159,7 @@ SettingsMenu::SettingsMenu(Config& cfg, int& slot) : cfg_(cfg), slot_(slot) {
     font_small_ = make_font(11, FW_NORMAL, L"Tahoma");
 }
 
-SettingsMenu::~SettingsMenu() {
+Canvas::~Canvas() {
     SelectObject(dc_, old_bmp_);
     DeleteObject(bmp_);
     DeleteObject(font_title_);
@@ -85,8 +168,13 @@ SettingsMenu::~SettingsMenu() {
     DeleteDC(dc_);
 }
 
-void SettingsMenu::show() {
+// ─────────────────────────────────────────────────────────── SettingsMenu ──
+
+SettingsMenu::SettingsMenu(Config& cfg, int& slot) : cfg_(cfg), slot_(slot) {}
+
+void SettingsMenu::show(bool in_game) {
     open_ = true;
+    in_game_ = in_game;
     page_ = Page::Main;
     sel_ = 0;
     capture_ = Capture::None;
@@ -94,11 +182,7 @@ void SettingsMenu::show() {
 }
 
 void SettingsMenu::set_status(const std::string& s) {
-    status_.clear();
-    // UTF-8 → UTF-16 (as mensagens têm acentos)
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
-    status_.resize(static_cast<size_t>(n));
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), status_.data(), n);
+    status_ = from_utf8(s);
     status_until_ = GetTickCount() + 2500;
 }
 
@@ -108,23 +192,40 @@ SettingsMenu::Action SettingsMenu::take_action() {
     return a;
 }
 
-int SettingsMenu::row_count() const { return page_ == Page::Main ? M_COUNT : BTN_COUNT + 1; }
+std::vector<int> SettingsMenu::main_ids() const {
+    std::vector<int> ids;
+    for (int i = 0; i < M_COUNT; ++i)
+        if (in_game_ || (i != M_RESUME && i != M_SAVE && i != M_LOAD)) ids.push_back(i);
+    return ids;
+}
+
+int SettingsMenu::row_count() const {
+    return page_ == Page::Main ? static_cast<int>(main_ids().size()) : BTN_COUNT + 1;
+}
 
 std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
     std::vector<Row> r;
     if (page_ == Page::Main) {
         const std::wstring slot = L"Slot " + std::to_wstring(slot_);
-        r.push_back({L"Resume", L"", false});
-        r.push_back({L"Save state", slot, true});
-        r.push_back({L"Load state", slot + (slot_exists_ ? L"" : L" (empty)"), true});
-        r.push_back({L"Fullscreen", fullscreen_ ? L"On" : L"Off", true});
-        r.push_back({L"Window size", std::to_wstring(cfg_.scale) + L"×", true});
-        r.push_back({L"Volume", cfg_.volume == 0 ? L"Muted" : std::to_wstring(cfg_.volume) + L"%", true});
-        r.push_back({L"Analog stick", cfg_.analog ? L"On" : L"Off", true});
-        r.push_back({L"Keyboard", L"›", false});
-        r.push_back({L"Gamepad", L"›", false});
-        r.push_back({L"Restore defaults", L"", false});
-        r.push_back({L"Quit game", L"", false});
+        for (int id : main_ids()) {
+            switch (id) {
+            case M_RESUME: r.push_back({L"Resume", L"", false}); break;
+            case M_SAVE: r.push_back({L"Save state", slot, true}); break;
+            case M_LOAD: r.push_back({L"Load state", slot + (slot_exists_ ? L"" : L" (empty)"), true}); break;
+            case M_FULLSCREEN: r.push_back({L"Fullscreen", fullscreen_ ? L"On" : L"Off", true}); break;
+            case M_SCALE: r.push_back({L"Window size", std::to_wstring(cfg_.scale) + L"×", true}); break;
+            case M_VOLUME:
+                r.push_back({L"Volume", cfg_.volume == 0 ? L"Muted" : std::to_wstring(cfg_.volume) + L"%", true});
+                break;
+            case M_ANALOG: r.push_back({L"Analog stick", cfg_.analog ? L"On" : L"Off", true}); break;
+            case M_LAUNCHER: r.push_back({L"Launcher at startup", cfg_.launcher ? L"On" : L"Off", true}); break;
+            case M_KEYBOARD: r.push_back({L"Keyboard", L"›", false}); break;
+            case M_PAD: r.push_back({L"Gamepad", L"›", false}); break;
+            case M_DEFAULTS: r.push_back({L"Restore defaults", L"", false}); break;
+            case M_QUIT: r.push_back({in_game_ ? quit_label_ : L"Back", L"", false}); break;
+            default: break;
+            }
+        }
         return r;
     }
     const bool kb = page_ == Page::Keyboard;
@@ -146,7 +247,7 @@ std::vector<SettingsMenu::Row> SettingsMenu::rows() const {
 
 void SettingsMenu::adjust(int row, int dir) {
     if (page_ != Page::Main) return;
-    switch (row) {
+    switch (main_ids()[static_cast<size_t>(row)]) {
     case M_SAVE:
     case M_LOAD: slot_ = ((slot_ + dir) % 10 + 10) % 10; break;
     case M_FULLSCREEN: action_ = Action::ToggleFullscreen; break;
@@ -161,35 +262,37 @@ void SettingsMenu::adjust(int row, int dir) {
         break;
     }
     case M_ANALOG: cfg_.analog = !cfg_.analog, dirty_ = true; break;
+    case M_LAUNCHER: cfg_.launcher = !cfg_.launcher, dirty_ = true; break;
     default: break;
     }
 }
 
 void SettingsMenu::activate(int row) {
     if (page_ == Page::Main) {
-        switch (row) {
+        switch (main_ids()[static_cast<size_t>(row)]) {
         case M_RESUME: action_ = Action::Resume; break;
         case M_SAVE: action_ = Action::SaveState; break;
         case M_LOAD: action_ = Action::LoadState; break;
         case M_FULLSCREEN: action_ = Action::ToggleFullscreen; break;
-        case M_SCALE: case M_VOLUME: case M_ANALOG: adjust(row, +1); break;
+        case M_SCALE: case M_VOLUME: case M_ANALOG: case M_LAUNCHER: adjust(row, +1); break;
         case M_KEYBOARD: sel_main_ = row, page_ = Page::Keyboard, sel_ = 0; break;
         case M_PAD: sel_main_ = row, page_ = Page::Pad, sel_ = 0; break;
         case M_DEFAULTS: {
-            const bool fs = cfg_.fullscreen;
-            cfg_ = default_config();
-            cfg_.fullscreen = fs;
+            Config d = default_config();
+            d.fullscreen = cfg_.fullscreen;
+            d.rom = cfg_.rom;
+            cfg_ = d;
             dirty_ = true;
             action_ = Action::ApplyScale;
             set_status("Defaults restored");
             break;
         }
-        case M_QUIT: action_ = Action::Quit; break;
+        case M_QUIT: action_ = in_game_ ? Action::Quit : Action::Resume; break;
         default: break;
         }
         return;
     }
-    if (row == BTN_COUNT) { // Voltar
+    if (row == BTN_COUNT) { // Back
         page_ = Page::Main;
         sel_ = sel_main_;
         return;
@@ -251,13 +354,18 @@ const uint32_t* SettingsMenu::render(const uint32_t* frozen) {
             dst[x] = (r + 18) << 16 | (g + 8) << 8 | b;
         }
     }
-    GdiFlush();
+    return draw_panel();
+}
 
-    // Moldura no estilo da caixa de diálogo do jogo: preto, marrom escuro, marrom claro, pêssego.
-    fill(dc_, kPanelL, kPanelT, kPanelR, kPanelB, RGB(0, 0, 0));
-    fill(dc_, kPanelL + 2, kPanelT + 2, kPanelR - 2, kPanelB - 2, kBorderDark);
-    fill(dc_, kPanelL + 5, kPanelT + 5, kPanelR - 5, kPanelB - 5, kBorderMid);
-    fill(dc_, kPanelL + 7, kPanelT + 7, kPanelR - 7, kPanelB - 7, kPeach);
+const uint32_t* SettingsMenu::render_over(const uint32_t* image) {
+    std::copy(image, image + kW * kH, bits_);
+    shade(bits_, 0, kH, 4);
+    return draw_panel();
+}
+
+const uint32_t* SettingsMenu::draw_panel() {
+    GdiFlush();
+    dialog_box(dc_, kPanelL, kPanelT, kPanelR, kPanelB);
     // Faixa do título com o detalhe vermelho embaixo.
     fill(dc_, kPanelL + 7, kPanelT + 7, kPanelR - 7, kPanelT + 37, kBrown);
     fill(dc_, kPanelL + 7, kPanelT + 37, kPanelR - 7, kPanelT + 39, kRed);
@@ -266,18 +374,19 @@ const uint32_t* SettingsMenu::render(const uint32_t* frozen) {
     text(dc_, font_title_, kCream, kW / 2, kPanelT + 10, title, TA_CENTER);
 
     const auto rs = rows();
+    const int row_h = std::min(20, (kFootTop - kRowsTop) / static_cast<int>(rs.size()));
     for (size_t i = 0; i < rs.size(); ++i) {
-        const int y = kRowsTop + static_cast<int>(i) * kRowH;
+        const int y = kRowsTop + static_cast<int>(i) * row_h;
         const bool selected = static_cast<int>(i) == sel_;
         if (selected) {
-            fill(dc_, kPanelL + 12, y - 1, kPanelR - 12, y + kRowH - 2, kBorderMid);
-            fill(dc_, kPanelL + 13, y, kPanelR - 13, y + kRowH - 3, kPeachDark);
-            text(dc_, font_item_, kRed, kPanelL + 17, y + 1, L"►");
+            fill(dc_, kPanelL + 12, y - 1, kPanelR - 12, y + row_h - 2, kBorderMid);
+            fill(dc_, kPanelL + 13, y, kPanelR - 13, y + row_h - 3, kPeachDark);
+            text(dc_, font_item_, kRed, kPanelL + 17, y, L"►");
         }
-        text(dc_, font_item_, kInk, kPanelL + 33, y + 1, rs[i].label);
+        text(dc_, font_item_, kInk, kPanelL + 33, y, rs[i].label);
         std::wstring v = rs[i].value;
         if (selected && rs[i].adjustable) v = L"◄  " + v + L"  ►";
-        text(dc_, font_item_, selected ? kBrown : kBrownMid, kPanelR - 20, y + 1, v, TA_RIGHT);
+        text(dc_, font_item_, selected ? kBrown : kBrownMid, kPanelR - 20, y, v, TA_RIGHT);
     }
 
     // Rodapé: mensagem de status ou dicas.
@@ -286,8 +395,97 @@ const uint32_t* SettingsMenu::render(const uint32_t* frozen) {
     else if (capture_ == Capture::Key) foot = L"Press the new key   ·   Esc cancels";
     else if (capture_ == Capture::Pad) foot = L"Press the new button   ·   Xbox/home button or Esc cancels";
     else foot = L"↑↓ select   ·   ←→ change   ·   Enter/A confirm   ·   Esc/B back";
-    fill(dc_, kPanelL + 7, kPanelB - 28, kPanelR - 7, kPanelB - 27, kBorderMid);
+    fill(dc_, kPanelL + 7, kFootTop, kPanelR - 7, kFootTop + 1, kBorderMid);
     text(dc_, font_small_, kBorderDark, kW / 2, kPanelB - 22, foot, TA_CENTER);
+
+    GdiFlush();
+    return bits_;
+}
+
+// ─────────────────────────────────────────────────────────────── Launcher ──
+
+namespace {
+enum LauncherRow { L_PLAY, L_SETTINGS, L_ROM, L_QUIT, L_COUNT };
+const wchar_t* kLauncherLabel[L_COUNT] = {L"Play", L"Settings", L"Select ROM…", L"Quit"};
+constexpr int kLPanelL = 14, kLPanelT = 196, kLPanelR = 190, kLPanelB = 292, kLRowH = 20;
+constexpr int kBarT = 298;
+} // namespace
+
+Launcher::Launcher() : bg_(load_background()) {}
+
+void Launcher::set_rom(const std::wstring& name, bool ok) {
+    rom_name_ = name;
+    rom_ok_ = ok;
+    sel_ = ok ? L_PLAY : L_ROM;
+}
+
+void Launcher::set_status(const std::string& s) {
+    status_ = from_utf8(s);
+    status_until_ = GetTickCount() + 3500;
+}
+
+Launcher::Action Launcher::take_action() {
+    const Action a = action_;
+    action_ = Action::None;
+    return a;
+}
+
+void Launcher::nav(Nav n) {
+    switch (n) {
+    case Nav::Up: sel_ = (sel_ + L_COUNT - 1) % L_COUNT; break;
+    case Nav::Down: sel_ = (sel_ + 1) % L_COUNT; break;
+    case Nav::Confirm:
+        switch (sel_) {
+        case L_PLAY:
+            if (rom_ok_) action_ = Action::Play;
+            else set_status("Select your ROM first");
+            break;
+        case L_SETTINGS: action_ = Action::Settings; break;
+        case L_ROM: action_ = Action::SelectRom; break;
+        case L_QUIT: action_ = Action::Quit; break;
+        default: break;
+        }
+        break;
+    case Nav::Back: sel_ = L_QUIT; break;
+    default: break;
+    }
+}
+
+const uint32_t* Launcher::render() {
+    std::copy(bg_.begin(), bg_.end(), bits_);
+    shade(bits_, kBarT, kH, 3); // barra de status embaixo
+    GdiFlush();
+
+    dialog_box(dc_, kLPanelL, kLPanelT, kLPanelR, kLPanelB);
+    for (int i = 0; i < L_COUNT; ++i) {
+        const int y = kLPanelT + 9 + i * kLRowH;
+        const bool selected = i == sel_;
+        const bool disabled = i == L_PLAY && !rom_ok_;
+        if (selected) {
+            fill(dc_, kLPanelL + 10, y - 1, kLPanelR - 10, y + kLRowH - 2, kBorderMid);
+            fill(dc_, kLPanelL + 11, y, kLPanelR - 11, y + kLRowH - 3, kPeachDark);
+            text(dc_, font_item_, kRed, kLPanelL + 15, y + 1, L"►");
+        }
+        text(dc_, font_item_, disabled ? kFaded : kInk, kLPanelL + 31, y + 1, kLauncherLabel[i]);
+    }
+
+    // Barra de status: ROM atual (ou mensagem) à esquerda, versão à direita.
+    std::wstring left;
+    COLORREF color = kCream;
+    if (status_until_ && GetTickCount() < status_until_) {
+        left = status_;
+        color = kPeach;
+    } else if (rom_name_.empty()) {
+        left = L"No ROM selected — choose \"Select ROM…\"";
+        color = kWarn;
+    } else if (!rom_ok_) {
+        left = L"✗ " + rom_name_ + L" is not the expected ROM (USA, BQZE)";
+        color = kWarn;
+    } else {
+        left = L"✓ " + rom_name_;
+    }
+    text(dc_, font_small_, color, 10, kBarT + 5, left);
+    text(dc_, font_small_, kSky, kW - 10, kBarT + 5, L"v" TLA_VERSION, TA_RIGHT);
 
     GdiFlush();
     return bits_;

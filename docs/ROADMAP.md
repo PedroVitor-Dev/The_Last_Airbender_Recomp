@@ -50,4 +50,6 @@
 - [x] 60 fps estável (áudio como relógio), save states com slots, remapeamento de controles
 - [x] Tela de configurações no visual do jogo (jogo congelado; Esc/F1/botão Xbox/home)
 - [x] Gamepad XInput com analógico, gatilhos e botão home; tela cheia, turbo, pausa, capturas
+- [x] Executável distribuído (v0.0.1) e launcher com a arte da capa (jogar, configurações, escolher a ROM)
+- [ ] Launcher: miniaturas dos save states e aviso de nova versão
 - [ ] Mods e substituição de assets

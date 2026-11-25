@@ -40,6 +40,7 @@ interpreter show **0 divergences**.
 |---|---|
 | ⚡ **Fast** | ~56× GBA speed when unthrottled (the recompiled code alone runs at ~216×) |
 | 🎮 **Real gamepad support** | XInput (Xbox, 8BitDo in X mode…), with analog stick, triggers and the home button |
+| 🚀 **Launcher** | Title screen with the cover art: play, settings and ROM selection, with the ROM verified |
 | 🛠️ **Settings screen** | Styled after the game itself. The game freezes while it is open |
 | 💾 **Save states** | 10 slots, transactional loading (a bad state never corrupts your game) |
 | 🖥️ **Made for PC** | Borderless fullscreen, crisp pixels at the correct aspect ratio, turbo, pause, PNG screenshots |
@@ -47,8 +48,9 @@ interpreter show **0 divergences**.
 | 🧪 **Verified** | Differential tests, an instruction fuzzer, mutation testing and reference frames |
 
 <div align="center">
-  <img src="docs/images/settings-menu.png" alt="Settings screen" width="480"><br>
-  <sub>The settings screen, drawn with the palette of the game's dialog boxes.</sub>
+  <img src="docs/images/launcher.png" alt="Launcher" width="420">
+  <img src="docs/images/settings-menu.png" alt="Settings screen" width="420"><br>
+  <sub>The launcher and the settings screen, drawn with the palette of the game's dialog boxes.</sub>
 </div>
 
 ## 🎮 How to play
@@ -59,10 +61,11 @@ interpreter show **0 divergences**.
    [latest release](https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/latest)
    and extract it.
 2. Put your ROM (`.gba`, USA version `BQZE`) in the `roms` folder.
-3. Run `AvatarRecomp.exe`.
+3. Run `AvatarRecomp.exe` and choose **Play** in the launcher.
 
-You can also drag the ROM onto the executable, or just open it and pick the ROM; the choice is
-remembered. Windows may show a SmartScreen warning because the program is not signed: click
+The launcher finds the ROM by itself and checks that it is the right one. You can also drag the
+ROM onto the executable, or use **Select ROM…**; the choice is remembered. To skip the launcher,
+turn off **Launcher at startup** in the settings. Windows may show a SmartScreen warning because the program is not signed: click
 **More info** → **Run anyway**. No installer and no extra runtimes needed.
 
 ### Build from source

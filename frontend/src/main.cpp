@@ -99,6 +99,25 @@ fs::path exe_dir() {
     return fs::current_path();
 }
 
+void load_save(gba::Gba& g, const fs::path& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return;
+    auto& d = g.bus.eeprom.data();
+    f.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+}
+
+std::unique_ptr<gba::Gba> make_game(const fs::path& rom_path, bool interp, std::string& err) {
+    auto rom = core::Rom::load(rom_path, &err);
+    if (!rom) return nullptr;
+    if (!rom->is_supported()) {
+        err = std::string("unsupported ROM (expected game code ") + core::kExpectedGameCode + ")";
+        return nullptr;
+    }
+    auto g = std::make_unique<gba::Gba>(*rom);
+    if (!interp) g->set_recomp(tla_recomp_table, tla_recomp_count, tla_recomp_overlays, tla_recomp_overlay_count);
+    return g;
+}
+
 } // namespace fe
 
 namespace {
@@ -135,12 +154,6 @@ uint16_t scripted_keys(const std::vector<Press>& script, uint64_t frame) {
     return k;
 }
 
-void load_save(gba::Gba& g, const fs::path& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return;
-    auto& d = g.bus.eeprom.data();
-    f.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
-}
 
 bool write_wav(const std::string& path, const std::vector<int16_t>& s, uint32_t rate) {
     std::ofstream f(path, std::ios::binary);
@@ -304,79 +317,27 @@ void fatal(const std::string& msg) {
 #endif
 }
 
-#if defined(_WIN32) && defined(TLA_GUI)
-// Executável distribuído: a ROM vem do argumento (arrastar a ROM sobre o .exe), da última usada
-// (tlagba.ini), de um .gba compatível ao lado do executável ou em roms\, ou de uma janela de
-// seleção. A escolhida fica gravada no ini para as próximas vezes.
-bool is_supported_rom(const fs::path& p) {
-    std::error_code ec;
-    if (!fs::is_regular_file(p, ec)) return false;
-    auto rom = core::Rom::load(p);
-    return rom && rom->is_supported();
-}
-
-fs::path find_rom_nearby() {
-    const fs::path base = fe::exe_dir();
-    for (const fs::path& dir : {base, base / "roms", base / "rom"}) {
-        std::error_code ec;
-        for (const auto& e : fs::directory_iterator(dir, ec)) {
-            std::wstring ext = e.path().extension().wstring();
-            for (auto& ch : ext) ch = static_cast<wchar_t>(towlower(ch));
-            if (ext == L".gba" && is_supported_rom(e.path())) return e.path();
-        }
-    }
-    return {};
-}
-
-fs::path ask_for_rom() {
-    wchar_t file[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof ofn;
-    ofn.lpstrTitle = L"Select your Avatar: The Last Airbender (USA) GBA ROM";
-    ofn.lpstrFilter = L"GBA ROM (*.gba)\0*.gba\0All files\0*.*\0";
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-    return GetOpenFileNameW(&ofn) ? fs::path(file) : fs::path();
-}
-
-// Devolve false se o usuário desistiu.
-bool resolve_gui_rom(Options& o) {
-    int wargc = 0;
-    wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-    if (wargv && wargc >= 2 && wargv[1][0] != L'-') o.rom = wargv[1];
-    if (wargv) LocalFree(wargv);
-
-    const fs::path ini = fe::exe_dir() / "tlagba.ini";
-    std::vector<std::string> warnings;
-    fe::Config cfg = fe::load_config(ini, warnings);
-    if (o.rom.empty() && is_supported_rom(cfg.rom)) o.rom = cfg.rom;
-    if (o.rom.empty()) o.rom = find_rom_nearby();
-    while (o.rom.empty() || !is_supported_rom(o.rom)) {
-        if (!o.rom.empty())
-            MessageBoxW(nullptr,
-                        L"This file is not the expected ROM.\n\nYou need Avatar: The Last Airbender for the "
-                        L"Game Boy Advance, USA version (game code BQZE).",
-                        L"Avatar: The Last Airbender Recomp", MB_OK | MB_ICONWARNING);
-        o.rom = ask_for_rom();
-        if (o.rom.empty()) return false;
-    }
-    if (cfg.rom != o.rom) {
-        cfg.rom = o.rom;
-        fe::save_config(ini, cfg);
-    }
-    return true;
-}
-#endif
 
 } // namespace
 
 int main(int argc, char** argv) {
     Options o;
 #if defined(_WIN32) && defined(TLA_GUI)
+    // AvatarRecomp.exe: a ROM pode vir de arrastar o arquivo sobre o executável; o resto é com o
+    // launcher.
     (void)argc;
     (void)argv;
-    if (!resolve_gui_rom(o)) return 0;
+    int wargc = 0;
+    if (wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc)) {
+        if (wargc >= 2 && wargv[1][0] != L'-') o.rom = wargv[1];
+        LocalFree(wargv);
+    }
+    try {
+        return fe::run_app(o);
+    } catch (const std::exception& e) {
+        fatal(e.what());
+        return 1;
+    }
 #else
     if (!parse_args(argc, argv, o)) {
         std::fprintf(stderr, "uso: tlagba <rom.gba> [--headless --frames N] [--interp] [--shot f.png] "
@@ -385,25 +346,16 @@ int main(int argc, char** argv) {
                              "[--load-state-at N arq]\n");
         return 2;
     }
-#endif
 
     std::string err;
-    auto rom = core::Rom::load(o.rom, &err);
-    if (!rom) {
-        fatal("could not open the ROM: " + err);
+    auto g = fe::make_game(o.rom, o.interp, err);
+    if (!g) {
+        fatal(err);
         return 1;
     }
-    if (!rom->is_supported()) {
-        fatal(std::string("unsupported ROM (expected game code ") + core::kExpectedGameCode + ")");
-        return 1;
-    }
-
-    auto g = std::make_unique<gba::Gba>(*rom);
-    if (!o.interp)
-        g->set_recomp(tla_recomp_table, tla_recomp_count, tla_recomp_overlays, tla_recomp_overlay_count);
     fs::path save_path = o.rom;
     save_path.replace_extension(".sav");
-    load_save(*g, save_path);
+    fe::load_save(*g, save_path);
 
     try {
         if (!o.load_state.empty()) {
@@ -422,4 +374,5 @@ int main(int argc, char** argv) {
         if (!o.shot.empty()) png::write_rgb(o.shot, g->frame().data(), gba::kScreenW, gba::kScreenH);
         return 1;
     }
+#endif
 }

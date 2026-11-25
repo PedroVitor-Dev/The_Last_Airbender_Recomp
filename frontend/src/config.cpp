@@ -136,6 +136,8 @@ void parse(const std::string& text, Config& c, std::vector<std::string>& warn) {
                 else bad();
             } else if (key == "FULLSCREEN") {
                 if (!parse_bool(val, c.fullscreen)) bad();
+            } else if (key == "LAUNCHER") {
+                if (!parse_bool(val, c.launcher)) bad();
             } else bad();
         } else if (section == "AUDIO") {
             if (key == "VOLUME") {
@@ -292,7 +294,8 @@ bool save_config(const std::filesystem::path& path, const Config& c) {
     }
     o << "[window]\n"
       << "scale = " << c.scale << "             ; window size (multiple of 240x160)\n"
-      << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n\n"
+      << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n"
+      << "launcher = " << (c.launcher ? "yes" : "no") << "        ; no = start the game directly\n\n"
       << "[audio]\n"
       << "volume = " << c.volume << "          ; 0-100 (0 = muted)\n\n"
       << "[keyboard]\n"
