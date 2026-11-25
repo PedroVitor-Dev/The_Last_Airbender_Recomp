@@ -94,7 +94,9 @@ void Ppu::render_text_bg(int bg, int line) {
 
         if (c256) {
             const uint32_t row = char_base + tile * 64 + py * 8;
-            if (row >= 0x10000) {
+            uint64_t row_bits = 0;
+            if (row < 0x10000) std::memcpy(&row_bits, vram + row, 8);
+            if (row >= 0x10000 || row_bits == 0) { // fora da área de BG ou toda transparente
                 std::fill_n(out + x, run, uint16_t(0));
             } else {
                 for (int i = 0; i < run; ++i, ++px) {
@@ -110,6 +112,11 @@ void Ppu::render_text_bg(int bg, int line) {
                 uint32_t bits;
                 std::memcpy(&bits, vram + row, 4); // 8 pixels de 4 bits
                 const uint8_t* pal_bank = pal + (e >> 12) * 32;
+                if (bits == 0) { // linha de tile toda transparente (comum em HUD/céu)
+                    std::fill_n(out + x, run, uint16_t(0));
+                    x += run;
+                    continue;
+                }
                 for (int i = 0; i < run; ++i, ++px) {
                     const int col = hflip ? 7 - px : px;
                     const uint32_t idx = (bits >> (col * 4)) & 15;
@@ -222,6 +229,44 @@ void Ppu::render_sprites(int line) {
             pd = static_cast<int16_t>(rd16(oam + g + 30));
         }
         const int iy = line - sy - bh / 2;
+
+        if (!affine) {
+            // Caminho rápido (a grande maioria): linha de tiles fixa, faixa visível recortada
+            // uma vez. Mesmo resultado do laço geral abaixo.
+            int ty = line - sy;
+            if (a1 & 0x2000) ty = h - 1 - ty;
+            const uint32_t step = c256 ? 2 : 1;
+            const uint32_t row_base =
+                map1d ? tile + (ty / 8) * (w / 8) * step : (c256 ? (tile & ~1u) : tile) + (ty / 8) * 32;
+            const bool hflip = a1 & 0x1000;
+            const int j0 = std::max(0, -sx), j1 = std::min(w, kScreenW - sx);
+            for (int j = j0; j < j1; ++j) {
+                const int x = sx + j;
+                const int tx = hflip ? w - 1 - j : j;
+                const uint32_t tile_n = row_base + (tx / 8) * step;
+                uint32_t idx, color_off;
+                if (c256) {
+                    idx = vram[(0x10000 + (tile_n & 0x3FF) * 32 + (ty & 7) * 8 + (tx & 7)) % 0x18000];
+                    color_off = 0x200 + idx * 2;
+                } else {
+                    idx = (vram[(0x10000 + (tile_n & 0x3FF) * 32 + (ty & 7) * 4 + (tx & 7) / 2) % 0x18000] >>
+                           ((tx & 1) * 4)) & 15;
+                    color_off = 0x200 + (palbank * 16 + idx) * 2;
+                }
+                if (!idx) continue;
+                if (mode == 2) {
+                    obj_window_[x] = true;
+                    continue;
+                }
+                if (prio < obj_prio_[x]) {
+                    obj_line_[x] = static_cast<uint16_t>((rd16(pal + color_off) & 0x7FFF) | kOpaque);
+                    obj_prio_[x] = static_cast<uint8_t>(prio);
+                    obj_semi_[x] = mode == 1;
+                    obj_prio_used_ |= static_cast<uint8_t>(1 << prio);
+                }
+            }
+            continue;
+        }
 
         for (int ix = -bw / 2; ix < bw / 2; ++ix) {
             const int x = sx + ix + bw / 2;

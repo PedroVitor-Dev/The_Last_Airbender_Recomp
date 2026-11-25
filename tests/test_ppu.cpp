@@ -25,6 +25,7 @@ struct PpuTestAccess {
     static auto& win(Ppu& p) { return p.obj_window_; }
     static uint8_t& prio_used(Ppu& p) { return p.obj_prio_used_; }
     static void compose(Ppu& p, int line) { p.compose(line); }
+    static void sprites(Ppu& p, int line) { p.render_sprites(line); }
 };
 
 } // namespace gba
@@ -135,6 +136,144 @@ void reference_compose(gba::Gba& g, int line, uint32_t* out) {
     }
 }
 
+struct SpriteLine {
+    std::array<uint16_t, W> color{};
+    std::array<uint8_t, W> prio{};
+    std::array<bool, W> semi{}, window{};
+};
+
+// Sprites de referência: cópia fiel do laço geral por pixel (antes do caminho rápido).
+void reference_sprites(gba::Gba& g, int line, SpriteLine& s) {
+    static constexpr uint8_t kObjW[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
+    static constexpr uint8_t kObjH[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
+    auto rd = [](const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; };
+    const uint8_t* vram = g.bus.vram.data();
+    const uint8_t* pal = g.bus.palette.data();
+    const uint8_t* oam = g.bus.oam.data();
+    const uint16_t dispcnt = g.io.reg(0);
+    const bool map1d = dispcnt & 0x40;
+    const bool bitmap_mode = (dispcnt & 7) >= 3;
+    s.color.fill(0);
+    s.prio.fill(4);
+    s.semi.fill(false);
+    s.window.fill(false);
+    for (int n = 0; n < 128; ++n) {
+        const uint16_t a0 = rd(oam + n * 8), a1 = rd(oam + n * 8 + 2), a2 = rd(oam + n * 8 + 4);
+        const bool affine = a0 & 0x100;
+        if (!affine && (a0 & 0x200)) continue;
+        const int shape = a0 >> 14;
+        if (shape == 3) continue;
+        const int sz = a1 >> 14;
+        const int w = kObjW[shape][sz], h = kObjH[shape][sz];
+        const bool dbl = affine && (a0 & 0x200);
+        const int bw = dbl ? w * 2 : w, bh = dbl ? h * 2 : h;
+        int sy = a0 & 0xFF;
+        if (sy >= 160) sy -= 256;
+        if (line < sy || line >= sy + bh) continue;
+        int sx = a1 & 0x1FF;
+        if (sx >= 240) sx -= 512;
+        const int mode = (a0 >> 10) & 3;
+        const bool c256 = a0 & 0x2000;
+        const uint32_t tile = a2 & 0x3FF;
+        if (bitmap_mode && tile < 512) continue;
+        const int prio = (a2 >> 10) & 3;
+        const uint32_t palbank = a2 >> 12;
+        int16_t pa = 0x100, pb = 0, pc = 0, pd = 0x100;
+        if (affine) {
+            const uint32_t gi = ((a1 >> 9) & 31) * 32;
+            pa = static_cast<int16_t>(rd(oam + gi + 6));
+            pb = static_cast<int16_t>(rd(oam + gi + 14));
+            pc = static_cast<int16_t>(rd(oam + gi + 22));
+            pd = static_cast<int16_t>(rd(oam + gi + 30));
+        }
+        const int iy = line - sy - bh / 2;
+        for (int ix = -bw / 2; ix < bw / 2; ++ix) {
+            const int x = sx + ix + bw / 2;
+            if (x < 0 || x >= W) continue;
+            int tx, ty;
+            if (affine) {
+                tx = ((pa * ix + pb * iy) >> 8) + w / 2;
+                ty = ((pc * ix + pd * iy) >> 8) + h / 2;
+                if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+            } else {
+                tx = ix + w / 2;
+                ty = iy + h / 2;
+                if (a1 & 0x1000) tx = w - 1 - tx;
+                if (a1 & 0x2000) ty = h - 1 - ty;
+            }
+            uint32_t tile_n;
+            const uint32_t step = c256 ? 2 : 1;
+            if (map1d) tile_n = tile + (ty / 8) * (w / 8) * step + (tx / 8) * step;
+            else tile_n = (c256 ? (tile & ~1u) : tile) + (ty / 8) * 32 + (tx / 8) * step;
+            uint32_t idx, color_off;
+            if (c256) {
+                idx = vram[(0x10000 + (tile_n & 0x3FF) * 32 + (ty & 7) * 8 + (tx & 7)) % 0x18000];
+                color_off = 0x200 + idx * 2;
+            } else {
+                idx = (vram[(0x10000 + (tile_n & 0x3FF) * 32 + (ty & 7) * 4 + (tx & 7) / 2) % 0x18000] >>
+                       ((tx & 1) * 4)) & 15;
+                color_off = 0x200 + (palbank * 16 + idx) * 2;
+            }
+            if (!idx) continue;
+            if (mode == 2) {
+                s.window[x] = true;
+                continue;
+            }
+            if (prio < s.prio[x]) {
+                s.color[x] = static_cast<uint16_t>((rd(pal + color_off) & 0x7FFF) | kOpaque);
+                s.prio[x] = static_cast<uint8_t>(prio);
+                s.semi[x] = mode == 1;
+            }
+        }
+    }
+}
+
+int test_sprites(gba::Gba& g, std::mt19937& rng) {
+    gba::Ppu& ppu = g.ppu;
+    const int kCases = 5000;
+    int failures = 0;
+    SpriteLine ref;
+    for (int t = 0; t < kCases; ++t) {
+        // VRAM de sprites e paleta aleatórias; OAM com viés para sprites visíveis.
+        for (size_t i = 0x10000; i < 0x18000; ++i) g.bus.vram[i] = static_cast<uint8_t>(rng() % 3 ? rng() : 0);
+        for (auto& b : g.bus.palette) b = static_cast<uint8_t>(rng());
+        for (int n = 0; n < 128; ++n) {
+            uint16_t a0 = static_cast<uint16_t>(rng()), a1 = static_cast<uint16_t>(rng()), a2 = static_cast<uint16_t>(rng());
+            if (rng() % 2) a0 = static_cast<uint16_t>((a0 & 0xFF00) | (rng() % 180));       // y perto da tela
+            if (rng() % 2) a1 = static_cast<uint16_t>((a1 & 0xFE00) | ((rng() % 300) - 30) & 0x1FF); // x perto da tela
+            if (rng() % 3) a0 = static_cast<uint16_t>(a0 & ~0x0300);                       // maioria não-afim, visível
+            std::memcpy(&g.bus.oam[n * 8], &a0, 2);
+            std::memcpy(&g.bus.oam[n * 8 + 2], &a1, 2);
+            std::memcpy(&g.bus.oam[n * 8 + 4], &a2, 2);
+            const uint16_t aff = static_cast<uint16_t>(rng());
+            std::memcpy(&g.bus.oam[n * 8 + 6], &aff, 2);
+        }
+        g.io.reg(0) = static_cast<uint16_t>(rng() & 0xFF47);
+        const int line = static_cast<int>(rng() % gba::kScreenH);
+        reference_sprites(g, line, ref);
+        PpuTestAccess::sprites(ppu, line);
+        uint8_t used = 0;
+        for (int x = 0; x < W; ++x)
+            if (ref.color[x] & kOpaque) used |= static_cast<uint8_t>(1 << ref.prio[x]);
+        // obj_prio_used_ pode ser um superconjunto (marca também pixels sobrescritos depois):
+        // custa no máximo um passe extra na composição. Faltar um bit seria erro.
+        bool ok = (PpuTestAccess::prio_used(ppu) & used) == used;
+        if (!ok && failures < 10)
+            std::printf("FALHOU sprites caso %d: prioridades usadas %X, esperado incluir %X\n", t,
+                        PpuTestAccess::prio_used(ppu), used);
+        for (int x = 0; x < W && ok; ++x) {
+            ok = PpuTestAccess::obj(ppu)[x] == ref.color[x] && PpuTestAccess::prio(ppu)[x] == ref.prio[x] &&
+                 PpuTestAccess::semi(ppu)[x] == ref.semi[x] && PpuTestAccess::win(ppu)[x] == ref.window[x];
+            if (!ok && failures < 10)
+                std::printf("FALHOU sprites caso %d linha %d x=%d: cor %04X x %04X, prio %u x %u\n", t, line, x,
+                            ref.color[x], PpuTestAccess::obj(ppu)[x], ref.prio[x], PpuTestAccess::prio(ppu)[x]);
+        }
+        if (!ok) ++failures;
+    }
+    std::printf("%d/%d casos de sprites idênticos à referência\n", kCases - failures, kCases);
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -205,5 +344,6 @@ int main() {
         }
     }
     std::printf("%d/%d casos de composição idênticos à referência\n", kCases - failures, kCases);
+    failures += test_sprites(*g, rng);
     return failures ? 1 : 0;
 }
