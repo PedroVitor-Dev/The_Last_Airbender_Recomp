@@ -1,10 +1,16 @@
 // Renderizador por scanline: BGs de texto (modo 0/1), afins (1/2), bitmap (3/4/5),
 // sprites normais e afins, janelas (WIN0/WIN1/OBJ) e efeitos de cor (alpha/brilho).
+//
+// Desempenho: BGs de texto são decodificados por tile (uma leitura de mapa a cada 8 px),
+// a composição percorre só as camadas ativas, pré-ordenadas por prioridade, e a conversão
+// BGR555 → ARGB usa uma tabela. A semântica é a mesma da versão por pixel (as capturas de
+// referência em build/golden conferem pixel a pixel).
 
 #include <algorithm>
 #include <cstring>
 
 #include "gba/gba.h"
+#include "gba/profile.h"
 
 namespace gba {
 
@@ -14,10 +20,16 @@ constexpr uint16_t kOpaque = 0x8000;
 
 inline uint16_t rd16(const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; }
 
-inline uint32_t to_argb(uint16_t c) {
-    const uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-    return 0xFF000000u | ((r << 3 | r >> 2) << 16) | ((g << 3 | g >> 2) << 8) | (b << 3 | b >> 2);
-}
+struct ArgbLut {
+    std::array<uint32_t, 32768> v{};
+    ArgbLut() {
+        for (uint32_t c = 0; c < 32768; ++c) {
+            const uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+            v[c] = 0xFF000000u | ((r << 3 | r >> 2) << 16) | ((g << 3 | g >> 2) << 8) | (b << 3 | b >> 2);
+        }
+    }
+};
+const ArgbLut kArgb;
 
 inline int32_t ref28(uint16_t lo, uint16_t hi) {
     const uint32_t v = (uint32_t(hi) << 16) | lo;
@@ -60,31 +72,48 @@ void Ppu::render_text_bg(int bg, int line) {
     const int w = (size & 1) ? 512 : 256, h = (size & 2) ? 512 : 256;
     const int hofs = io.reg(0x10 + bg * 4) & 0x1FF, vofs = io.reg(0x12 + bg * 4) & 0x1FF;
     const int ty = (line + vofs) & (h - 1);
-    auto& out = bg_line_[bg];
+    const uint32_t row_in_map = screen_base + ((ty & 255) >> 3) * 64; // 32 entradas × 2 bytes
+    const int block_row = (ty >> 8) * (w == 512 ? 2 : 1);
+    uint16_t* out = bg_line_[bg].data();
 
-    for (int x = 0; x < kScreenW; ++x) {
+    int x = 0;
+    while (x < kScreenW) {
         const int tx = (x + hofs) & (w - 1);
-        const int block = (tx >> 8) + (ty >> 8) * (w == 512 ? 2 : 1);
-        const uint32_t map_addr = screen_base + block * 0x800 + (((ty & 255) >> 3) * 32 + ((tx & 255) >> 3)) * 2;
+        const int block = (tx >> 8) + block_row;
+        const uint32_t map_addr = row_in_map + block * 0x800 + ((tx & 255) >> 3) * 2;
         const uint16_t e = rd16(vram + (map_addr & 0xFFFF));
         const uint32_t tile = e & 0x3FF;
-        int px = tx & 7, py = ty & 7;
-        if (e & 0x400) px = 7 - px;
-        if (e & 0x800) py = 7 - py;
-        uint32_t idx;
-        uint32_t color_off;
+        const bool hflip = e & 0x400;
+        const int py = (e & 0x800) ? 7 - (ty & 7) : (ty & 7);
+        int px = tx & 7;
+        const int run = std::min(8 - px, kScreenW - x); // pixels deste tile nesta linha
+
         if (c256) {
-            const uint32_t a = char_base + tile * 64 + py * 8 + px;
-            if (a >= 0x10000) { out[x] = 0; continue; }
-            idx = vram[a];
-            color_off = idx * 2;
+            const uint32_t row = char_base + tile * 64 + py * 8;
+            if (row >= 0x10000) {
+                std::fill_n(out + x, run, uint16_t(0));
+            } else {
+                for (int i = 0; i < run; ++i, ++px) {
+                    const uint32_t idx = vram[row + (hflip ? 7 - px : px)];
+                    out[x + i] = idx ? static_cast<uint16_t>((rd16(pal + idx * 2) & 0x7FFF) | kOpaque) : 0;
+                }
+            }
         } else {
-            const uint32_t a = char_base + tile * 32 + py * 4 + px / 2;
-            if (a >= 0x10000) { out[x] = 0; continue; }
-            idx = (vram[a] >> ((px & 1) * 4)) & 15;
-            color_off = ((e >> 12) * 16 + idx) * 2;
+            const uint32_t row = char_base + tile * 32 + py * 4;
+            if (row >= 0x10000) {
+                std::fill_n(out + x, run, uint16_t(0));
+            } else {
+                uint32_t bits;
+                std::memcpy(&bits, vram + row, 4); // 8 pixels de 4 bits
+                const uint8_t* pal_bank = pal + (e >> 12) * 32;
+                for (int i = 0; i < run; ++i, ++px) {
+                    const int col = hflip ? 7 - px : px;
+                    const uint32_t idx = (bits >> (col * 4)) & 15;
+                    out[x + i] = idx ? static_cast<uint16_t>((rd16(pal_bank + idx * 2) & 0x7FFF) | kOpaque) : 0;
+                }
+            }
         }
-        out[x] = idx ? static_cast<uint16_t>((rd16(pal + color_off) & 0x7FFF) | kOpaque) : 0;
+        x += run;
     }
 }
 
@@ -245,85 +274,149 @@ void Ppu::compose(int line) {
     else if (mode >= 3) bg_mask &= 0x4;
     const bool obj_on = dispcnt & 0x1000;
 
+    // BGs ativos em ordem de desenho: prioridade, depois índice.
     std::array<int, 4> bg_prio{};
+    std::array<int, 4> order{};
+    int nbg = 0;
     for (int b = 0; b < 4; ++b) bg_prio[b] = io.reg(0x08 + b * 2) & 3;
+    for (int p = 0; p < 4; ++p)
+        for (int b = 0; b < 4; ++b)
+            if (((bg_mask >> b) & 1) && bg_prio[b] == p) order[nbg++] = b;
 
+    // Janelas: o teste vertical e a faixa horizontal valem para a linha inteira.
     const bool win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
     const bool any_win = win0 || win1 || winobj;
     const uint16_t winin = io.reg(0x48), winout = io.reg(0x4A);
-    auto in_win = [&](int which, int x) {
-        const uint16_t hreg = io.reg(0x40 + which * 2), vreg = io.reg(0x44 + which * 2);
-        const int x1 = hreg >> 8, x2 = hreg & 0xFF, y1 = vreg >> 8, y2 = vreg & 0xFF;
-        const bool inx = x1 <= x2 ? (x >= x1 && x < x2) : (x >= x1 || x < x2);
+    struct WinLine {
+        bool on;
+        int x1, x2;
+    } wl[2]{};
+    for (int k = 0; k < 2; ++k) {
+        const uint16_t hreg = io.reg(0x40 + k * 2), vreg = io.reg(0x44 + k * 2);
+        const int y1 = vreg >> 8, y2 = vreg & 0xFF;
         const bool iny = y1 <= y2 ? (line >= y1 && line < y2) : (line >= y1 || line < y2);
-        return inx && iny;
+        wl[k] = {(k == 0 ? win0 : win1) && iny, hreg >> 8, hreg & 0xFF};
+    }
+    auto in_x = [](const WinLine& w, int x) {
+        return w.x1 <= w.x2 ? (x >= w.x1 && x < w.x2) : (x >= w.x1 || x < w.x2);
     };
 
     const uint16_t bldcnt = io.reg(0x50), bldalpha = io.reg(0x52);
     const int blend_mode = (bldcnt >> 6) & 3;
     const int eva = std::min(16, bldalpha & 31), evb = std::min(16, (bldalpha >> 8) & 31);
     const int evy = std::min(16, io.reg(0x54) & 31);
+    auto alpha = [&](uint16_t a, uint16_t b) {
+        uint16_t r = 0;
+        for (int s = 0; s < 15; s += 5) {
+            const int ca = (a >> s) & 31, cb = (b >> s) & 31;
+            r |= static_cast<uint16_t>(std::min(31, (ca * eva + cb * evb) >> 4) << s);
+        }
+        return r;
+    };
 
     uint32_t* out = &frame_[line * kScreenW];
+
+    // Camadas ativas já resolvidas para ponteiros (ordem de desenho).
+    const uint16_t* layer[4] = {};
+    int layer_prio[4] = {};
+    for (int i = 0; i < nbg; ++i) {
+        layer[i] = bg_line_[order[i]].data();
+        layer_prio[i] = bg_prio[order[i]];
+    }
+
+    if (prof::enabled) {
+        bool any_semi = false;
+        for (int x = 0; x < kScreenW; ++x) any_semi |= obj_semi_[x];
+        auto& c = prof::counters;
+        ++c.lines;
+        c.lines_win += any_win;
+        c.lines_blend += blend_mode != 0;
+        c.lines_semi += any_semi;
+    }
+
+    // Brilho (modos 2/3) por canal, calculado uma vez por linha.
+    uint8_t bright[32];
+    for (int c = 0; c < 32; ++c)
+        bright[c] = static_cast<uint8_t>(blend_mode == 2 ? c + (((31 - c) * evy) >> 4) : c - ((c * evy) >> 4));
+
     for (int x = 0; x < kScreenW; ++x) {
         uint8_t mask = 0x3F;
         if (any_win) {
-            if (win0 && in_win(0, x)) mask = winin & 0x3F;
-            else if (win1 && in_win(1, x)) mask = (winin >> 8) & 0x3F;
+            if (wl[0].on && in_x(wl[0], x)) mask = winin & 0x3F;
+            else if (wl[1].on && in_x(wl[1], x)) mask = (winin >> 8) & 0x3F;
             else if (winobj && obj_window_[x]) mask = (winout >> 8) & 0x3F;
             else mask = winout & 0x3F;
         }
 
-        // Duas camadas do topo: id 0-3 = BG, 4 = OBJ, 5 = backdrop
-        int top_id = 5, bot_id = 5;
-        uint16_t top = backdrop, bot = backdrop;
-        int found = 0;
-        for (int p = 0; p < 4 && found < 2; ++p) {
-            if (obj_on && (mask & 0x10) && (obj_line_[x] & kOpaque) && obj_prio_[x] == p) {
-                if (found == 0) top = obj_line_[x], top_id = 4;
-                else bot = obj_line_[x], bot_id = 4;
-                ++found;
+        // Camadas em ordem: id 0-3 = BG, 4 = OBJ, 5 = backdrop. O sprite vence BGs de
+        // prioridade igual ou maior (número maior). `i` e `obj` avançam entre as duas buscas.
+        bool obj = obj_on && (mask & 0x10) && (obj_line_[x] & kOpaque);
+        const int op = obj_prio_[x];
+        int i = 0;
+        uint16_t top = backdrop;
+        int top_id = 5;
+        for (;;) {
+            if (i < nbg && !(obj && op <= layer_prio[i])) {
+                const int b = order[i];
+                const uint16_t c = layer[i][x];
+                ++i;
+                if (((mask >> b) & 1) && (c & kOpaque)) {
+                    top = c;
+                    top_id = b;
+                    break;
+                }
+                continue;
             }
-            for (int b = 0; b < 4 && found < 2; ++b) {
-                if (!((bg_mask >> b) & 1) || !((mask >> b) & 1) || bg_prio[b] != p) continue;
-                const uint16_t c = bg_line_[b][x];
-                if (!(c & kOpaque)) continue;
-                if (found == 0) top = c, top_id = b;
-                else bot = c, bot_id = b;
-                ++found;
+            if (obj) {
+                top = obj_line_[x];
+                top_id = 4;
+                obj = false;
             }
+            break;
         }
         top &= 0x7FFF;
-        bot &= 0x7FFF;
+
+        const bool top_first = (bldcnt >> top_id) & 1;
+        const bool semi_top = top_id == 4 && obj_semi_[x];
+        // A segunda camada só importa para alpha: sprite semitransparente ou modo 1.
+        bool bot_second = false;
+        uint16_t bot = backdrop;
+        if (semi_top || ((mask & 0x20) && blend_mode == 1 && top_first)) {
+            int bot_id = 5;
+            for (;;) {
+                if (i < nbg && !(obj && op <= layer_prio[i])) {
+                    const int b = order[i];
+                    const uint16_t c = layer[i][x];
+                    ++i;
+                    if (((mask >> b) & 1) && (c & kOpaque)) {
+                        bot = c;
+                        bot_id = b;
+                        break;
+                    }
+                    continue;
+                }
+                if (obj) {
+                    bot = obj_line_[x];
+                    bot_id = 4;
+                }
+                break;
+            }
+            bot &= 0x7FFF;
+            bot_second = (bldcnt >> (8 + bot_id)) & 1;
+        }
 
         uint16_t color = top;
-        const bool fx = mask & 0x20;
-        const bool top_first = (bldcnt >> top_id) & 1;
-        const bool bot_second = (bldcnt >> (8 + bot_id)) & 1;
-        auto alpha = [&](uint16_t a, uint16_t b) {
-            uint16_t r = 0;
-            for (int s = 0; s < 15; s += 5) {
-                const int ca = (a >> s) & 31, cb = (b >> s) & 31;
-                r |= static_cast<uint16_t>(std::min(31, (ca * eva + cb * evb) >> 4) << s);
-            }
-            return r;
-        };
-        if (top_id == 4 && obj_semi_[x] && bot_second) {
+        if (semi_top && bot_second) {
             color = alpha(top, bot);
-        } else if (fx) {
+        } else if (mask & 0x20) {
             if (blend_mode == 1 && top_first && bot_second) {
                 color = alpha(top, bot);
             } else if ((blend_mode == 2 || blend_mode == 3) && top_first) {
-                uint16_t r = 0;
-                for (int s = 0; s < 15; s += 5) {
-                    int c = (top >> s) & 31;
-                    c = blend_mode == 2 ? c + (((31 - c) * evy) >> 4) : c - ((c * evy) >> 4);
-                    r |= static_cast<uint16_t>(c << s);
-                }
-                color = r;
+                color = static_cast<uint16_t>(bright[top & 31] | (bright[(top >> 5) & 31] << 5) |
+                                              (bright[(top >> 10) & 31] << 10));
             }
         }
-        out[x] = to_argb(color);
+        out[x] = kArgb.v[color];
     }
 }
 
@@ -335,7 +428,9 @@ void Ppu::render_line(int line) {
         return;
     }
     const int mode = dispcnt & 7;
-    for (auto& l : bg_line_) l.fill(0);
+    // Toda camada que a composição lê é reescrita por inteiro abaixo: não precisa limpar.
+    {
+    prof::Scope s_bg(prof::counters.bg_ns);
     switch (mode) {
     case 0:
         for (int b = 0; b < 4; ++b) if (dispcnt & (0x100 << b)) render_text_bg(b, line);
@@ -352,8 +447,15 @@ void Ppu::render_line(int line) {
         if (dispcnt & 0x400) render_bitmap(mode, line);
         break;
     }
-    render_sprites(line);
-    compose(line);
+    }
+    {
+        prof::Scope s_obj(prof::counters.obj_ns);
+        render_sprites(line);
+    }
+    {
+        prof::Scope s_mix(prof::counters.mix_ns);
+        compose(line);
+    }
 
     // Avança as referências afins internas (PB/PD) para a próxima linha.
     for (int i = 0; i < 2; ++i) {

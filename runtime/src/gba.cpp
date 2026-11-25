@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "gba/gba.h"
+#include "gba/profile.h"
 
 namespace gba {
 
@@ -71,7 +72,10 @@ void Gba::begin_line() {
 
 void Gba::advance_video() {
     if (!in_hblank_) {
-        if (line_ < static_cast<uint32_t>(kScreenH)) ppu.render_line(static_cast<int>(line_));
+        if (line_ < static_cast<uint32_t>(kScreenH)) {
+            prof::Scope s(prof::counters.ppu_ns);
+            ppu.render_line(static_cast<int>(line_));
+        }
         io.on_hblank(static_cast<int>(line_));
         in_hblank_ = true;
         video_event_ = line_start_ + kCyclesPerLine;
@@ -112,6 +116,8 @@ void Gba::copy_state_from(const Gba& o) {
 
 void Gba::sync() {
     if (cycles > cycle_limit) throw StopRequested{};
+    prof::Scope scope(prof::counters.sync_ns);
+    ++prof::counters.syncs;
     for (;;) {
         io.update_timers(cycles);
         if (cycles < video_event_) break;

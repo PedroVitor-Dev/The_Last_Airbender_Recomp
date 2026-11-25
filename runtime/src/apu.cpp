@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "gba/gba.h"
+#include "gba/profile.h"
 
 namespace gba {
 
@@ -293,6 +294,7 @@ void Apu::mix_sample() {
 }
 
 void Apu::catch_up(uint64_t now) {
+    prof::Scope scope(prof::counters.apu_ns);
     for (;;) {
         const uint64_t t = (sample_num_ * kCpuHz + kSampleRate - 1) / kSampleRate;
         if (t > now) break;

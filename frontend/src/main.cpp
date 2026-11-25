@@ -13,6 +13,7 @@
 //   --wav <arquivo.wav>         grava o áudio gerado (headless)
 //   --mute                      janela sem áudio (ritmo pelo relógio)
 //   --fallback-log <arquivo>    lista endereços executados pelo interpretador
+//   --profile                   tempo por subsistema (headless)
 //   --dump-ram <prefixo>        grava <prefixo>_ewram.bin e <prefixo>_iwram.bin no fim (headless)
 //
 // Teclado (janela): setas, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R, Esc=sair.
@@ -30,6 +31,7 @@
 #include "audio_out.h"
 #include "core/rom.h"
 #include "gba/gba.h"
+#include "gba/profile.h"
 #include "png.h"
 
 #ifdef _WIN32
@@ -56,7 +58,7 @@ struct Press {
 
 struct Options {
     fs::path rom;
-    bool headless = false, mute = false, interp = false;
+    bool headless = false, mute = false, interp = false, profile = false;
     uint64_t frames = 600, shot_every = 0;
     bool frames_given = false;
     std::string shot, shot_prefix = "frame", wav, fallback_log, dump_ram;
@@ -160,6 +162,7 @@ int run_headless(gba::Gba& g, const Options& o) {
     std::vector<int16_t> audio;
     const auto t0 = std::chrono::steady_clock::now();
     g.set_keys(scripted_keys(o.script, 0));
+    gba::prof::enabled = o.profile;
     g.run([&] {
         const uint64_t f = g.frame_count; // quadros completos
         auto chunk = g.apu.take_samples();
@@ -175,6 +178,23 @@ int run_headless(gba::Gba& g, const Options& o) {
                 static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
                 g.frame_count / secs / 59.7275, g.has_recomp() ? "recompilado" : "interpretador");
     print_stats(g, o);
+    if (o.profile) {
+        const auto& c = gba::prof::counters;
+        const double total = secs * 1e9;
+        // sync inclui o PPU; APU é chamada tanto dentro quanto fora do sync.
+        const double cpu = total - static_cast<double>(c.sync_ns) - static_cast<double>(c.apu_ns);
+        std::printf("Perfil (%.2f s): PPU %.1f%%, APU %.1f%%, sync (sem PPU) %.1f%%, CPU/recomp+resto %.1f%% "
+                    "(%llu syncs, %.1f por quadro)\n",
+                    secs, 100.0 * c.ppu_ns / total, 100.0 * c.apu_ns / total,
+                    100.0 * (static_cast<double>(c.sync_ns) - c.ppu_ns) / total, 100.0 * cpu / total,
+                    static_cast<unsigned long long>(c.syncs), static_cast<double>(c.syncs) / g.frame_count);
+        std::printf("  PPU: BGs %.1f%%, sprites %.1f%%, composição %.1f%%\n", 100.0 * c.bg_ns / total,
+                    100.0 * c.obj_ns / total, 100.0 * c.mix_ns / total);
+        if (c.lines)
+            std::printf("  linhas: %llu, com janela %.0f%%, com efeito de cor %.0f%%, com sprite semitransparente %.0f%%\n",
+                        static_cast<unsigned long long>(c.lines), 100.0 * c.lines_win / c.lines,
+                        100.0 * c.lines_blend / c.lines, 100.0 * c.lines_semi / c.lines);
+    }
     if (!o.dump_ram.empty()) {
         std::ofstream(o.dump_ram + "_ewram.bin", std::ios::binary)
             .write(reinterpret_cast<const char*>(g.bus.ewram.data()), g.bus.ewram.size());
@@ -297,6 +317,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         const std::string a = argv[i];
         if (a == "--headless") o.headless = true;
         else if (a == "--interp") o.interp = true;
+        else if (a == "--profile") o.profile = true;
         else if (a == "--mute") o.mute = true;
         else if (a == "--frames" && i + 1 < argc) o.frames = std::stoull(argv[++i]), o.frames_given = true;
         else if (a == "--shot" && i + 1 < argc) o.shot = argv[++i];
