@@ -12,6 +12,7 @@ Every ARM/Thumb function in the ROM becomes C++ and runs on top of a reimplement
 ![CMake](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![License](https://img.shields.io/badge/license-GPL--3.0-BD2100)
 ![Status](https://img.shields.io/badge/status-playable-5A2918)
+[![Release](https://img.shields.io/github/v/release/PedroVitor-Dev/The_Last_Airbender_Recomp?label=download&color=E7A573)](https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/latest)
 
 [About](#-about) · [Highlights](#-highlights) · [How to play](#-how-to-play) · [Controls](#-controls) ·
 [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Development](#-development) · [Support](#-support)
@@ -46,13 +47,27 @@ interpreter show **0 divergences**.
 | 🧪 **Verified** | Differential tests, an instruction fuzzer, mutation testing and reference frames |
 
 <div align="center">
-  <img src="docs/images/menu.png" alt="Settings screen" width="480"><br>
+  <img src="docs/images/settings-menu.png" alt="Settings screen" width="480"><br>
   <sub>The settings screen, drawn with the palette of the game's dialog boxes.</sub>
 </div>
 
 ## 🎮 How to play
 
-### Requirements
+### Download (Windows 10/11, 64-bit)
+
+1. Download `AvatarRecomp-vX.Y.Z-win64.zip` from the
+   [latest release](https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/latest)
+   and extract it.
+2. Put your ROM (`.gba`, USA version `BQZE`) in the `roms` folder.
+3. Run `AvatarRecomp.exe`.
+
+You can also drag the ROM onto the executable, or just open it and pick the ROM; the choice is
+remembered. Windows may show a SmartScreen warning because the program is not signed: click
+**More info** → **Run anyway**. No installer and no extra runtimes needed.
+
+### Build from source
+
+Requirements:
 
 - Windows 10/11 with **Visual Studio 2022 Build Tools** (C++, CMake, Ninja)
 - **Python 3.10+**
@@ -70,11 +85,14 @@ interpreter show **0 divergences**.
 > Without step 2, `tlagba` runs on the interpreter only (about 3× slower). To build while the game
 > is running, use another folder: `.\scripts\build.ps1 -BuildDir build\dev`.
 
-### Play
+### Run your build
 
 ```powershell
-.\build\release\tlagba.exe "roms\<your-rom>.gba"
+.\build\release\AvatarRecomp.exe                     # same as the release: finds the ROM by itself
+.\build\release\tlagba.exe "roms\<your-rom>.gba"     # console version, with the options below
 ```
+
+To build the release zip: `.\scripts\package.ps1` (output in `dist\`).
 
 The in-game save (EEPROM) is stored in `roms\<your-rom>.sav`.
 
@@ -228,4 +246,5 @@ Code licensed under **GPL-3.0** (see [LICENSE](LICENSE)).
 
 *Avatar: The Last Airbender* and its characters are trademarks of Nickelodeon/Viacom; the game
 was published by THQ. This is a non-profit fan project with no affiliation to the rights holders.
-No code or data from the original game is distributed here.
+This repository contains no code or data from the original game; release builds contain the
+game's code translated to C++ and only run with your own ROM.

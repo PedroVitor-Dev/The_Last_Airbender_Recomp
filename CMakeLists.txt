@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
-project(TheLastAirbenderRecomp VERSION 0.1.0 LANGUAGES C CXX)
+project(TheLastAirbenderRecomp VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Runtime do C++ estático: o executável distribuído não depende do VC++ Redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(MSVC)
     add_compile_options(/W4 /utf-8 /permissive- /Zc:__cplusplus)
@@ -57,12 +60,29 @@ else()
     message(STATUS "Sem código recompilado: tlagba usará só o interpretador")
 endif()
 
-# Frontend
-add_executable(tlagba frontend/src/main.cpp frontend/src/audio_xaudio2.cpp frontend/src/config.cpp
+# Frontend: tlagba (console, para desenvolvimento e testes) e AvatarRecomp (o executável
+# distribuído: sem console, ícone, acha a ROM sozinho e mostra erros em caixas de diálogo).
+set(TLA_FRONTEND_SOURCES frontend/src/main.cpp frontend/src/audio_xaudio2.cpp frontend/src/config.cpp
     frontend/src/input_xinput.cpp frontend/src/window_win32.cpp frontend/src/menu.cpp)
-target_link_libraries(tlagba PRIVATE tla_gba tla_recomp)
 if(WIN32)
-    target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32 gdi32 xinput)
+    set(TLA_ICON_PATH ${CMAKE_SOURCE_DIR}/frontend/res/app.ico)
+    configure_file(frontend/res/app.rc.in ${CMAKE_BINARY_DIR}/app.rc @ONLY)
+    list(APPEND TLA_FRONTEND_SOURCES ${CMAKE_BINARY_DIR}/app.rc)
+endif()
+foreach(target tlagba AvatarRecomp)
+    add_executable(${target} ${TLA_FRONTEND_SOURCES})
+    target_link_libraries(${target} PRIVATE tla_gba tla_recomp)
+    target_compile_definitions(${target} PRIVATE TLA_VERSION="${PROJECT_VERSION}")
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE winmm xaudio2 ole32 gdi32 xinput comdlg32 shell32)
+    endif()
+endforeach()
+if(WIN32)
+    set_target_properties(AvatarRecomp PROPERTIES WIN32_EXECUTABLE ON)
+    target_compile_definitions(AvatarRecomp PRIVATE TLA_GUI=1)
+    if(MSVC)
+        target_link_options(AvatarRecomp PRIVATE /ENTRY:mainCRTStartup)
+    endif()
 endif()
 
 # Teste diferencial recompilado × interpretador

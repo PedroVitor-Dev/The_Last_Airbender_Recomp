@@ -29,6 +29,7 @@ struct Config {
     int deadzone = 8000;                                 // 0–32767
     int key_menu = 0, key_save = 0, key_load = 0, key_slot_prev = 0, key_slot_next = 0;
     int key_turbo = 0, key_pause = 0, key_fullscreen = 0, key_screenshot = 0;
+    std::filesystem::path rom; // última ROM aberta (usada quando o executável é aberto sem argumentos)
 };
 
 // Lê o arquivo (criando-o com os padrões se não existir). Linhas inválidas viram avisos.

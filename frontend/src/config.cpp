@@ -126,7 +126,10 @@ void parse(const std::string& text, Config& c, std::vector<std::string>& warn) {
         const std::string val = trim(line.substr(eq + 1));
         auto bad = [&] { warn.push_back(where + ": invalid value for " + key); };
 
-        if (section == "WINDOW") {
+        if (section == "GAME") {
+            if (key == "ROM") c.rom = std::filesystem::path(std::u8string(val.begin(), val.end()));
+            else bad();
+        } else if (section == "WINDOW") {
             if (key == "SCALE") {
                 const int s = std::atoi(val.c_str());
                 if (s >= 1 && s <= 10) c.scale = s;
@@ -282,8 +285,12 @@ bool save_config(const std::filesystem::path& path, const Config& c) {
     std::ostringstream o;
     o << "; tlagba.ini — Avatar: The Last Airbender Recomp settings.\n"
          "; Also editable from the in-game settings screen (Esc, F1 or the Xbox/home button).\n"
-         "; Delete this file to restore the defaults. Several keys per action: separate with commas.\n\n"
-         "[window]\n"
+         "; Delete this file to restore the defaults. Several keys per action: separate with commas.\n\n";
+    if (!c.rom.empty()) {
+        const std::u8string r = c.rom.u8string();
+        o << "[game]\nrom = " << std::string(r.begin(), r.end()) << "\n\n";
+    }
+    o << "[window]\n"
       << "scale = " << c.scale << "             ; window size (multiple of 240x160)\n"
       << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n\n"
       << "[audio]\n"

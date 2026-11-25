@@ -28,7 +28,7 @@ namespace {
 
 using clock = std::chrono::steady_clock;
 
-const wchar_t* kTitle = L"Avatar: The Last Airbender — Recomp";
+const wchar_t* kTitle = L"Avatar: The Last Airbender Recomp v" TLA_VERSION;
 
 // Máscaras XInput usadas na navegação do menu (layout Xbox: A confirma, B volta).
 constexpr uint32_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
@@ -264,6 +264,7 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
     wc.lpfnWndProc = wnd_proc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1)); // ícone do app.rc
     wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = L"TlaRecomp";
     RegisterClassW(&wc);

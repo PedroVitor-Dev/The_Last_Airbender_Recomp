@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "core/rom.h"
+#include "config.h"
 #include "frontend.h"
 #include "gba/gba.h"
 #include "gba/profile.h"
@@ -43,6 +44,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commdlg.h>
+#include <shellapi.h>
+#include <cwctype>
 #endif
 
 // Tabela gerada pelo recompilador (ou vazia, sem código gerado).
@@ -66,7 +70,8 @@ bool read_file(const fs::path& path, std::vector<uint8_t>& out) {
 
 bool write_file(const fs::path& path, const std::vector<uint8_t>& data) {
     // Grava num temporário e troca: um save state nunca fica pela metade.
-    const fs::path tmp = path.string() + ".tmp";
+    fs::path tmp = path;
+    tmp += ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary);
         if (!f || !f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size())))
@@ -208,7 +213,7 @@ int run_headless(gba::Gba& g, const Options& o) {
         if (o.load_state_at && f == o.load_state_at && !loaded_mid_run) {
             loaded_mid_run = true;
             std::vector<uint8_t> bytes;
-            if (!fe::read_file(o.load_state_at_path, bytes)) throw std::runtime_error("save state não encontrado");
+            if (!fe::read_file(o.load_state_at_path, bytes)) throw std::runtime_error("save state not found");
             g.load_state_and_restart(bytes); // não retorna
         }
         return f < o.frames;
@@ -287,10 +292,92 @@ bool parse_args(int argc, char** argv, Options& o) {
     return true;
 }
 
+// Erro para o usuário: caixa de diálogo no executável distribuído, stderr no tlagba.
+void fatal(const std::string& msg) {
+#if defined(_WIN32) && defined(TLA_GUI)
+    const int n = MultiByteToWideChar(CP_UTF8, 0, msg.data(), static_cast<int>(msg.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, msg.data(), static_cast<int>(msg.size()), w.data(), n);
+    MessageBoxW(nullptr, w.c_str(), L"Avatar: The Last Airbender Recomp", MB_OK | MB_ICONERROR);
+#else
+    std::fprintf(stderr, "error: %s\n", msg.c_str());
+#endif
+}
+
+#if defined(_WIN32) && defined(TLA_GUI)
+// Executável distribuído: a ROM vem do argumento (arrastar a ROM sobre o .exe), da última usada
+// (tlagba.ini), de um .gba compatível ao lado do executável ou em roms\, ou de uma janela de
+// seleção. A escolhida fica gravada no ini para as próximas vezes.
+bool is_supported_rom(const fs::path& p) {
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec)) return false;
+    auto rom = core::Rom::load(p);
+    return rom && rom->is_supported();
+}
+
+fs::path find_rom_nearby() {
+    const fs::path base = fe::exe_dir();
+    for (const fs::path& dir : {base, base / "roms", base / "rom"}) {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            std::wstring ext = e.path().extension().wstring();
+            for (auto& ch : ext) ch = static_cast<wchar_t>(towlower(ch));
+            if (ext == L".gba" && is_supported_rom(e.path())) return e.path();
+        }
+    }
+    return {};
+}
+
+fs::path ask_for_rom() {
+    wchar_t file[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof ofn;
+    ofn.lpstrTitle = L"Select your Avatar: The Last Airbender (USA) GBA ROM";
+    ofn.lpstrFilter = L"GBA ROM (*.gba)\0*.gba\0All files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    return GetOpenFileNameW(&ofn) ? fs::path(file) : fs::path();
+}
+
+// Devolve false se o usuário desistiu.
+bool resolve_gui_rom(Options& o) {
+    int wargc = 0;
+    wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (wargv && wargc >= 2 && wargv[1][0] != L'-') o.rom = wargv[1];
+    if (wargv) LocalFree(wargv);
+
+    const fs::path ini = fe::exe_dir() / "tlagba.ini";
+    std::vector<std::string> warnings;
+    fe::Config cfg = fe::load_config(ini, warnings);
+    if (o.rom.empty() && is_supported_rom(cfg.rom)) o.rom = cfg.rom;
+    if (o.rom.empty()) o.rom = find_rom_nearby();
+    while (o.rom.empty() || !is_supported_rom(o.rom)) {
+        if (!o.rom.empty())
+            MessageBoxW(nullptr,
+                        L"This file is not the expected ROM.\n\nYou need Avatar: The Last Airbender for the "
+                        L"Game Boy Advance, USA version (game code BQZE).",
+                        L"Avatar: The Last Airbender Recomp", MB_OK | MB_ICONWARNING);
+        o.rom = ask_for_rom();
+        if (o.rom.empty()) return false;
+    }
+    if (cfg.rom != o.rom) {
+        cfg.rom = o.rom;
+        fe::save_config(ini, cfg);
+    }
+    return true;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
     Options o;
+#if defined(_WIN32) && defined(TLA_GUI)
+    (void)argc;
+    (void)argv;
+    if (!resolve_gui_rom(o)) return 0;
+#else
     if (!parse_args(argc, argv, o)) {
         std::fprintf(stderr, "uso: tlagba <rom.gba> [--headless --frames N] [--interp] [--shot f.png] "
                              "[--shot-every K prefixo] [--press TECLA@ini-fim] [--wav f.wav] [--mute] "
@@ -298,15 +385,16 @@ int main(int argc, char** argv) {
                              "[--load-state-at N arq]\n");
         return 2;
     }
+#endif
 
     std::string err;
     auto rom = core::Rom::load(o.rom, &err);
     if (!rom) {
-        std::fprintf(stderr, "erro: %s\n", err.c_str());
+        fatal("could not open the ROM: " + err);
         return 1;
     }
     if (!rom->is_supported()) {
-        std::fprintf(stderr, "erro: ROM não suportada (esperado %s)\n", core::kExpectedGameCode);
+        fatal(std::string("unsupported ROM (expected game code ") + core::kExpectedGameCode + ")");
         return 1;
     }
 
@@ -320,7 +408,7 @@ int main(int argc, char** argv) {
     try {
         if (!o.load_state.empty()) {
             std::vector<uint8_t> bytes;
-            if (!fe::read_file(o.load_state, bytes)) throw std::runtime_error("save state não encontrado");
+            if (!fe::read_file(o.load_state, bytes)) throw std::runtime_error("save state not found");
             g->load_state(bytes);
         }
 #ifdef _WIN32
@@ -330,8 +418,7 @@ int main(int argc, char** argv) {
         store_save(*g, save_path);
         return rc;
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "erro fatal: %s (quadro %llu)\n", e.what(),
-                     static_cast<unsigned long long>(g->frame_count));
+        fatal(std::string(e.what()) + " (frame " + std::to_string(g->frame_count) + ")");
         if (!o.shot.empty()) png::write_rgb(o.shot, g->frame().data(), gba::kScreenW, gba::kScreenH);
         return 1;
     }

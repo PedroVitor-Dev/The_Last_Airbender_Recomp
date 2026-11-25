@@ -12,6 +12,7 @@ assets/extracted/
 
 # Build
 build/
+dist/
 out/
 .vs/
 *.user
