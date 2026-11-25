@@ -15,8 +15,13 @@
 //   --fallback-log <arquivo>    lista endereços executados pelo interpretador
 //   --profile                   tempo por subsistema (headless)
 //   --dump-ram <prefixo>        grava <prefixo>_ewram.bin e <prefixo>_iwram.bin no fim (headless)
+//   --load-state <arquivo>      carrega um save state antes de começar
+//   --save-state-at <N> <arq>   salva o estado ao fim do quadro N (headless)
+//   --load-state-at <N> <arq>   carrega o estado ao fim do quadro N, no meio da execução (headless)
 //
-// Teclado (janela): setas, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R, Esc=sair.
+// Janela: teclas, controle e atalhos no tlagba.ini (criado ao lado do executável). Padrões:
+// setas, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R; F5 salva / F9 carrega estado,
+// F6/F7 trocam o slot, Tab acelera, P pausa, F11 ou Alt+Enter tela cheia, F12 captura, Esc sai.
 
 #include <algorithm>
 #include <chrono>
@@ -28,8 +33,8 @@
 #include <string>
 #include <vector>
 
-#include "audio_out.h"
 #include "core/rom.h"
+#include "frontend.h"
 #include "gba/gba.h"
 #include "gba/profile.h"
 #include "png.h"
@@ -38,7 +43,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <timeapi.h>
 #endif
 
 // Tabela gerada pelo recompilador (ou vazia, sem código gerado).
@@ -49,22 +53,54 @@ extern const size_t tla_recomp_overlay_count;
 
 namespace fs = std::filesystem;
 
+// ─────────────────────────────────────────── arquivos (compartilhados) ──
+namespace fe {
+
+bool read_file(const fs::path& path, std::vector<uint8_t>& out) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    out.resize(static_cast<size_t>(f.tellg()));
+    f.seekg(0);
+    return static_cast<bool>(f.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size())));
+}
+
+bool write_file(const fs::path& path, const std::vector<uint8_t>& data) {
+    // Grava num temporário e troca: um save state nunca fica pela metade.
+    const fs::path tmp = path.string() + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f || !f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size())))
+            return false;
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    return !ec;
+}
+
+void store_save(gba::Gba& g, const fs::path& path) {
+    if (!g.bus.eeprom.dirty()) return;
+    std::ofstream f(path, std::ios::binary);
+    const auto& d = g.bus.eeprom.data();
+    f.write(reinterpret_cast<const char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    g.bus.eeprom.clear_dirty();
+}
+
+fs::path exe_dir() {
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) return fs::path(buf).parent_path();
+#endif
+    return fs::current_path();
+}
+
+} // namespace fe
+
 namespace {
 
-struct Press {
-    uint16_t key;
-    uint64_t from, to;
-};
-
-struct Options {
-    fs::path rom;
-    bool headless = false, mute = false, interp = false, profile = false, no_render = false;
-    uint64_t frames = 600, shot_every = 0;
-    bool frames_given = false;
-    std::string shot, shot_prefix = "frame", wav, fallback_log, dump_ram;
-    int scale = 3;
-    std::vector<Press> script;
-};
+using fe::Options;
+using fe::Press;
+using fe::store_save;
 
 uint16_t key_from_name(const std::string& n) {
     static const std::pair<const char*, uint16_t> keys[] = {
@@ -99,14 +135,6 @@ void load_save(gba::Gba& g, const fs::path& path) {
     if (!f) return;
     auto& d = g.bus.eeprom.data();
     f.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
-}
-
-void store_save(gba::Gba& g, const fs::path& path) {
-    if (!g.bus.eeprom.dirty()) return;
-    std::ofstream f(path, std::ios::binary);
-    const auto& d = g.bus.eeprom.data();
-    f.write(reinterpret_cast<const char*>(d.data()), static_cast<std::streamsize>(d.size()));
-    g.bus.eeprom.clear_dirty();
 }
 
 bool write_wav(const std::string& path, const std::vector<int16_t>& s, uint32_t rate) {
@@ -160,6 +188,7 @@ void print_stats(const gba::Gba& g, const Options& o) {
 
 int run_headless(gba::Gba& g, const Options& o) {
     std::vector<int16_t> audio;
+    bool loaded_mid_run = false;
     const auto t0 = std::chrono::steady_clock::now();
     g.set_keys(scripted_keys(o.script, 0));
     gba::prof::enabled = o.profile;
@@ -172,6 +201,16 @@ int run_headless(gba::Gba& g, const Options& o) {
             png::write_rgb(o.shot_prefix + "_" + std::to_string(f) + ".png", g.frame().data(), gba::kScreenW,
                            gba::kScreenH);
         g.set_keys(scripted_keys(o.script, f));
+        if (o.save_state_at && f == o.save_state_at) {
+            if (!fe::write_file(o.save_state_path, g.save_state()))
+                std::fprintf(stderr, "erro: não foi possível gravar %s\n", o.save_state_path.string().c_str());
+        }
+        if (o.load_state_at && f == o.load_state_at && !loaded_mid_run) {
+            loaded_mid_run = true;
+            std::vector<uint8_t> bytes;
+            if (!fe::read_file(o.load_state_at_path, bytes)) throw std::runtime_error("save state não encontrado");
+            g.load_state_and_restart(bytes); // não retorna
+        }
         return f < o.frames;
     });
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -210,106 +249,6 @@ int run_headless(gba::Gba& g, const Options& o) {
     return 0;
 }
 
-#ifdef _WIN32
-uint16_t g_keys = 0;
-
-uint16_t vk_to_key(WPARAM vk) {
-    switch (vk) {
-    case VK_UP: return gba::KEY_UP;
-    case VK_DOWN: return gba::KEY_DOWN;
-    case VK_LEFT: return gba::KEY_LEFT;
-    case VK_RIGHT: return gba::KEY_RIGHT;
-    case 'X': return gba::KEY_A;
-    case 'Z': return gba::KEY_B;
-    case VK_RETURN: return gba::KEY_START;
-    case VK_BACK: return gba::KEY_SELECT;
-    case 'A': return gba::KEY_L;
-    case 'S': return gba::KEY_R;
-    default: return 0;
-    }
-}
-
-LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    switch (msg) {
-    case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) PostQuitMessage(0);
-        g_keys |= vk_to_key(wp);
-        return 0;
-    case WM_KEYUP: g_keys &= static_cast<uint16_t>(~vk_to_key(wp)); return 0;
-    case WM_KILLFOCUS: g_keys = 0; return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
-    default: return DefWindowProcW(hwnd, msg, wp, lp);
-    }
-}
-
-int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
-    HINSTANCE inst = GetModuleHandleW(nullptr);
-    WNDCLASSW wc{};
-    wc.lpfnWndProc = wnd_proc;
-    wc.hInstance = inst;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"TlaRecomp";
-    RegisterClassW(&wc);
-    RECT rc{0, 0, gba::kScreenW * o.scale, gba::kScreenH * o.scale};
-    const DWORD style = WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX;
-    AdjustWindowRect(&rc, style, FALSE);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Avatar: The Last Airbender — Recomp", style | WS_VISIBLE,
-                              CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top, nullptr,
-                              nullptr, inst, nullptr);
-    HDC dc = GetDC(hwnd);
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = gba::kScreenW;
-    bmi.bmiHeader.biHeight = -gba::kScreenH;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    auto audio = o.mute ? nullptr : AudioOut::create(gba::Apu::kSampleRate);
-    timeBeginPeriod(1);
-    using clock = std::chrono::steady_clock;
-    const auto frame_time = std::chrono::nanoseconds(16742706); // 59,7275 Hz
-    const auto started = clock::now();
-    auto next = started;
-    const uint64_t max_frames = o.frames_given ? o.frames : 0;
-
-    g.run([&] {
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) return false;
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-        StretchDIBits(dc, 0, 0, gba::kScreenW * o.scale, gba::kScreenH * o.scale, 0, 0, gba::kScreenW,
-                      gba::kScreenH, g.frame().data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
-        if (g.frame_count % 60 == 0) store_save(g, save_path);
-        auto samples = g.apu.take_samples();
-        if (audio) {
-            audio->submit(samples); // áudio como relógio: ~3 quadros na fila
-            while (audio->queued() > 3) Sleep(1);
-        } else {
-            next += frame_time;
-            const auto now = clock::now();
-            if (next > now)
-                Sleep(static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(next - now).count()));
-            else if (now - next > frame_time * 5)
-                next = now;
-        }
-        g.set_keys(g_keys);
-        return !max_frames || g.frame_count < max_frames;
-    });
-
-    timeEndPeriod(1);
-    const double secs = std::chrono::duration<double>(clock::now() - started).count();
-    std::printf("%llu quadros em %.2f s (%.2f fps, alvo 59,73)%s, modo %s\n",
-                static_cast<unsigned long long>(g.frame_count), secs, g.frame_count / secs,
-                audio ? ", ritmo pelo áudio" : "", g.has_recomp() ? "recompilado" : "interpretador");
-    DestroyWindow(hwnd);
-    ReleaseDC(hwnd, dc);
-    store_save(g, save_path);
-    return 0;
-}
-#endif
 
 bool parse_args(int argc, char** argv, Options& o) {
     if (argc < 2) return false;
@@ -328,6 +267,11 @@ bool parse_args(int argc, char** argv, Options& o) {
         else if (a == "--wav" && i + 1 < argc) o.wav = argv[++i];
         else if (a == "--fallback-log" && i + 1 < argc) o.fallback_log = argv[++i];
         else if (a == "--dump-ram" && i + 1 < argc) o.dump_ram = argv[++i];
+        else if (a == "--load-state" && i + 1 < argc) o.load_state = argv[++i];
+        else if (a == "--save-state-at" && i + 2 < argc)
+            o.save_state_at = std::stoull(argv[++i]), o.save_state_path = argv[++i];
+        else if (a == "--load-state-at" && i + 2 < argc)
+            o.load_state_at = std::stoull(argv[++i]), o.load_state_at_path = argv[++i];
         else if (a == "--press" && i + 1 < argc) {
             Press p{};
             if (!parse_press(argv[++i], p)) {
@@ -350,7 +294,8 @@ int main(int argc, char** argv) {
     if (!parse_args(argc, argv, o)) {
         std::fprintf(stderr, "uso: tlagba <rom.gba> [--headless --frames N] [--interp] [--shot f.png] "
                              "[--shot-every K prefixo] [--press TECLA@ini-fim] [--wav f.wav] [--mute] "
-                             "[--scale n] [--fallback-log arq]\n");
+                             "[--scale n] [--fallback-log arq] [--load-state arq] [--save-state-at N arq] "
+                             "[--load-state-at N arq]\n");
         return 2;
     }
 
@@ -373,8 +318,13 @@ int main(int argc, char** argv) {
     load_save(*g, save_path);
 
     try {
+        if (!o.load_state.empty()) {
+            std::vector<uint8_t> bytes;
+            if (!fe::read_file(o.load_state, bytes)) throw std::runtime_error("save state não encontrado");
+            g->load_state(bytes);
+        }
 #ifdef _WIN32
-        if (!o.headless) return run_window(*g, o, save_path);
+        if (!o.headless) return fe::run_window(*g, o, save_path);
 #endif
         const int rc = run_headless(*g, o);
         store_save(*g, save_path);

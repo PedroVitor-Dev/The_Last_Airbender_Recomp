@@ -58,10 +58,11 @@ else()
 endif()
 
 # Frontend
-add_executable(tlagba frontend/src/main.cpp frontend/src/audio_xaudio2.cpp)
+add_executable(tlagba frontend/src/main.cpp frontend/src/audio_xaudio2.cpp frontend/src/config.cpp
+    frontend/src/input_xinput.cpp frontend/src/window_win32.cpp frontend/src/menu.cpp)
 target_link_libraries(tlagba PRIVATE tla_gba tla_recomp)
 if(WIN32)
-    target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32)
+    target_link_libraries(tlagba PRIVATE winmm xaudio2 ole32 gdi32 xinput)
 endif()
 
 # Teste diferencial recompilado × interpretador
