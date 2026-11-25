@@ -13,9 +13,20 @@ else()
 endif()
 
 # Biblioteca comum (ROM, decodificador ARMv4T)
-add_library(tla_core STATIC core/src/rom.cpp)
+add_library(tla_core STATIC
+    core/src/rom.cpp
+    core/src/armv4t_decode.cpp
+    core/src/armv4t_disasm.cpp)
 target_include_directories(tla_core PUBLIC core/include)
 
 # Recompilador offline
-add_executable(tlarecomp recompiler/src/main.cpp)
+add_executable(tlarecomp
+    recompiler/src/main.cpp
+    recompiler/src/analysis.cpp)
 target_link_libraries(tlarecomp PRIVATE tla_core)
+
+# Testes
+enable_testing()
+add_executable(test_decoder tests/test_decoder.cpp)
+target_link_libraries(test_decoder PRIVATE tla_core)
+add_test(NAME decoder COMMAND test_decoder)
