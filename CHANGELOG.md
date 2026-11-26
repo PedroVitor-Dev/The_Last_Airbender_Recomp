@@ -2,7 +2,9 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.0.3] — 2026-11-26
+
+Works with [RecompLauncher](https://recomplauncher.com).
 
 ### Added
 - RecompLauncher support: `recomplauncher.json` in every release (Easy Setup with the player's
@@ -56,5 +58,6 @@ First public release. The whole game runs natively on PC through static recompil
 ### Requirements
 - Windows 10/11, 64-bit. Your own ROM dump of the USA cartridge (`BQZE`).
 
+[0.0.3]: https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/tag/v0.0.3
 [0.0.2]: https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/tag/v0.0.2
 [0.0.1]: https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/tag/v0.0.1
