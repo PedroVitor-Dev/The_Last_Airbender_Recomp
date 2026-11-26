@@ -31,6 +31,9 @@ struct Options {
     fs::path save_state_path;
     uint64_t load_state_at = 0;    // --load-state-at N arquivo (headless; carrega no meio de run)
     fs::path load_state_at_path;
+    // AvatarRecomp.exe, para launchers como o RecompLauncher (sem elas, nada muda):
+    bool game_given = false;       // --game <rom>: vai direto ao jogo, sem o launcher próprio
+    fs::path data;                 // --data <pasta>: saves, states e capturas ficam nela
 };
 
 bool read_file(const fs::path& path, std::vector<uint8_t>& out);

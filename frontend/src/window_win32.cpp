@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <cstring>
 #include <cwctype>
 #include <functional>
 #include <memory>
@@ -589,7 +590,8 @@ struct Session {
 
     // Uma partida. Devolve true se a janela foi fechada (encerrar o programa); false se o jogador
     // voltou ao launcher.
-    bool play(gba::Gba& g, const fs::path& save_path, bool app) {
+    // files_dir: onde ficam states e capturas (vazio: ao lado do .sav, como sempre).
+    bool play(gba::Gba& g, const fs::path& save_path, bool app, const fs::path& files_dir = {}) {
         ws.leave = false;
         ws.paused = false;
         ws.req_menu = false;
@@ -604,7 +606,7 @@ struct Session {
         bmi.bmiHeader.biBitCount = 32;
         bmi.bmiHeader.biCompression = BI_RGB;
 
-        const fs::path rom_dir = fs::absolute(save_path).parent_path();
+        const fs::path rom_dir = files_dir.empty() ? fs::absolute(save_path).parent_path() : files_dir;
         const std::wstring stem = save_path.stem().wstring();
         auto slot_path = [&](int s) {
             return rom_dir / "states" / (stem + L".slot" + std::to_wstring(s) + L".state");
@@ -804,8 +806,41 @@ int run_window(gba::Gba& g, const Options& o, const fs::path& save_path) {
 }
 
 // AvatarRecomp.exe: launcher ⇄ jogo, na mesma janela.
+//
+// Aberto por um launcher externo (--game <rom>, ou RECOMPLAUNCHER=1 do RecompLauncher) com uma ROM
+// válida: vai direto ao jogo e fecha ao sair dele. --data <pasta> leva saves, states e capturas
+// para essa pasta. Sem isso, tudo como antes.
 int run_app(const Options& o) {
     Session s(o);
+    auto env_is = [](const char* name, const char* value) {
+        char buf[32] = {};
+        const DWORD n = GetEnvironmentVariableA(name, buf, sizeof buf);
+        return n > 0 && n < sizeof buf && std::strcmp(buf, value) == 0;
+    };
+    if (env_is("RECOMPLAUNCHER_MODE", "bigpicture")) set_fullscreen(s.ws, true); // só nesta sessão
+    const bool direct = (o.game_given || env_is("RECOMPLAUNCHER", "1")) && rom_ok(o.rom);
+    auto paths_for = [&](const fs::path& rom, fs::path& save_path, fs::path& files_dir) {
+        if (o.data.empty()) {
+            save_path = rom;
+            save_path.replace_extension(".sav");
+            files_dir.clear();
+            return;
+        }
+        fs::create_directories(o.data / "saves");
+        save_path = o.data / "saves" / rom.filename().replace_extension(".sav");
+        files_dir = o.data;
+    };
+    if (direct) {
+        std::string err;
+        auto g = make_game(o.rom, false, err);
+        if (!g) throw std::runtime_error(err);
+        fs::path save_path, files_dir;
+        paths_for(o.rom, save_path, files_dir);
+        load_save(*g, save_path);
+        s.play(*g, save_path, false, files_dir);
+        return 0;
+    }
+
     fs::path rom = o.rom;
     if (!rom_ok(rom)) rom = rom_ok(s.cfg.rom) ? s.cfg.rom : find_rom_nearby();
     if (rom_ok(rom) && rom != s.cfg.rom) {
@@ -825,10 +860,10 @@ int run_app(const Options& o) {
             launcher.set_status("Could not start: " + err);
             continue;
         }
-        fs::path save_path = rom;
-        save_path.replace_extension(".sav");
+        fs::path save_path, files_dir;
+        paths_for(rom, save_path, files_dir);
         load_save(*g, save_path);
-        if (s.play(*g, save_path, true)) break;
+        if (s.play(*g, save_path, true, files_dir)) break;
     }
     return 0;
 }

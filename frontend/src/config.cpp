@@ -299,14 +299,21 @@ bool save_config(const std::filesystem::path& path, const Config& c) {
         const std::u8string r = c.rom.u8string();
         o << "[game]\nrom = " << std::string(r.begin(), r.end()) << "\n\n";
     }
+    // Comentários sempre na linha de cima, nunca depois do valor: assim ferramentas que editam o
+    // arquivo linha a linha (como o RecompLauncher) leem e gravam só o valor.
     o << "[window]\n"
-      << "scale = " << c.scale << "             ; window size (multiple of 240x160)\n"
+      << "; window size (multiple of 240x160)\n"
+      << "scale = " << c.scale << "\n"
       << "fullscreen = " << (c.fullscreen ? "yes" : "no") << "\n"
-      << "vsync = " << (c.vsync ? "yes" : "no") << "           ; sync frames to the monitor refresh\n"
-      << "frame_rate = " << (c.fps60 ? "60" : "original") << "      ; 60 or original (59.73, like the GBA)\n"
-      << "launcher = " << (c.launcher ? "yes" : "no") << "        ; no = start the game directly\n\n"
+      << "; sync frames to the monitor refresh\n"
+      << "vsync = " << (c.vsync ? "yes" : "no") << "\n"
+      << "; 60 or original (59.73, like the GBA)\n"
+      << "frame_rate = " << (c.fps60 ? "60" : "original") << "\n"
+      << "; no = start the game directly\n"
+      << "launcher = " << (c.launcher ? "yes" : "no") << "\n\n"
       << "[audio]\n"
-      << "volume = " << c.volume << "          ; 0-100 (0 = muted)\n\n"
+      << "; 0-100 (0 = muted)\n"
+      << "volume = " << c.volume << "\n\n"
       << "[keyboard]\n"
          "; Keys: A-Z, 0-9, F1-F12, UP, DOWN, LEFT, RIGHT, ENTER, BACKSPACE, SPACE, TAB, ESC,\n"
          ";       SHIFT, CTRL, INSERT, DELETE, HOME, END, PAGEUP, PAGEDOWN, NUMPAD0-NUMPAD9\n";
@@ -323,18 +330,22 @@ bool save_config(const std::filesystem::path& path, const Config& c) {
         std::snprintf(line, sizeof line, "%-6s = %s\n", kButtonNames[b], join_pad(c.pad[b]).c_str());
         o << line;
     }
-    o << "analog = " << (c.analog ? "yes" : "no") << "         ; the left stick also moves\n"
-      << "deadzone = " << c.deadzone << "     ; 0-32767\n\n"
+    o << "; the left stick also moves\n"
+      << "analog = " << (c.analog ? "yes" : "no") << "\n"
+      << "; 0-32767\n"
+      << "deadzone = " << c.deadzone << "\n\n"
       << "[shortcuts]\n"
-      << "menu       = " << key_name(c.key_menu) << "   ; settings screen (Esc and the Xbox/home button too)\n"
+      << "; menu: settings screen (Esc and the Xbox/home button too); turbo: hold to fast-forward;\n"
+      << "; fullscreen: Alt+Enter works too; screenshot: saves a PNG to screenshots\\\n"
+      << "menu       = " << key_name(c.key_menu) << "\n"
       << "save_state = " << key_name(c.key_save) << "\n"
       << "load_state = " << key_name(c.key_load) << "\n"
       << "prev_slot  = " << key_name(c.key_slot_prev) << "\n"
       << "next_slot  = " << key_name(c.key_slot_next) << "\n"
-      << "turbo      = " << key_name(c.key_turbo) << "   ; hold to fast-forward\n"
+      << "turbo      = " << key_name(c.key_turbo) << "\n"
       << "pause      = " << key_name(c.key_pause) << "\n"
-      << "fullscreen = " << key_name(c.key_fullscreen) << "   ; Alt+Enter works too\n"
-      << "screenshot = " << key_name(c.key_screenshot) << "   ; saves a PNG to screenshots\\\n";
+      << "fullscreen = " << key_name(c.key_fullscreen) << "\n"
+      << "screenshot = " << key_name(c.key_screenshot) << "\n";
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     f << o.str();

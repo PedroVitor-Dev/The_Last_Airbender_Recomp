@@ -337,12 +337,25 @@ int main(int argc, char** argv) {
     Options o;
 #if defined(_WIN32) && defined(TLA_GUI)
     // AvatarRecomp.exe: a ROM pode vir de arrastar o arquivo sobre o executável; o resto é com o
-    // launcher.
+    // launcher. Para launchers externos: --game <rom> (ou --game=<rom>) vai direto ao jogo e
+    // --data <pasta> (ou --data=<pasta>) guarda saves, states e capturas nela.
     (void)argc;
     (void)argv;
     int wargc = 0;
     if (wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc)) {
         if (wargc >= 2 && wargv[1][0] != L'-') o.rom = wargv[1];
+        for (int i = 1; i < wargc; ++i) {
+            const std::wstring a = wargv[i];
+            auto value = [&](const wchar_t* name, fs::path& out) {
+                const std::wstring eq = std::wstring(name) + L"=";
+                if (a.rfind(eq, 0) == 0) out = a.substr(eq.size());
+                else if (a == name && i + 1 < wargc) out = wargv[++i];
+                else return false;
+                return true;
+            };
+            if (value(L"--game", o.rom)) o.game_given = true;
+            else value(L"--data", o.data);
+        }
         LocalFree(wargv);
     }
     try {
