@@ -14,7 +14,7 @@ Every ARM/Thumb function in the ROM becomes C++ and runs on top of a reimplement
 ![Status](https://img.shields.io/badge/status-playable-5A2918)
 [![Release](https://img.shields.io/github/v/release/PedroVitor-Dev/The_Last_Airbender_Recomp?label=download&color=E7A573)](https://github.com/PedroVitor-Dev/The_Last_Airbender_Recomp/releases/latest)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+<a href="https://recomplauncher.com/game/the-last-airbender-recomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 [About](#-about) · [Highlights](#-highlights) · [How to play](#-how-to-play) · [Controls](#-controls) ·
 [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Development](#-development) · [Support](#-support)
