@@ -2,6 +2,19 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- RecompLauncher support: `recomplauncher.json` in every release (Easy Setup with the player's
+  ROM, video, audio and controls settings on the game's page, saves and save states backed up).
+- `AvatarRecomp.exe --game <rom>` starts that ROM straight away and `--data <folder>` keeps saves,
+  save states and screenshots in that folder. Started by RecompLauncher, it skips its own launcher
+  and opens full screen in Big Picture mode. Without these, nothing changes.
+
+### Changed
+- Release zips are named `AvatarRecomp-vX.Y.Z-Windows-x64.zip`.
+- `tlagba.ini` keeps its comments on their own lines (same keys and values).
+
 ## [0.0.2] — 2026-11-25
 
 Fixes a freeze when talking to NPCs and slowdown while walking. **Everyone on 0.0.1 should update.**

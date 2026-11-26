@@ -1,0 +1,107 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Avatar: The Last Airbender Recomp",
+  "repo": "PedroVitor-Dev/The_Last_Airbender_Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your Avatar: The Last Airbender ROM (.gba), USA release (game code BQZE).",
+      "formats": [{ "type": "file", "extensions": ["gba"] }]
+    }
+  ],
+  "start": {
+    "program": ["AvatarRecomp.exe"],
+    "args": ["--game={input:game}", "--data", "{data}"]
+  },
+  "saves": ["{data}/saves", "{data}/states"],
+  "folders": {
+    "screenshots": [{ "path": "{data}/screenshots" }]
+  },
+  "actions": [
+    { "id": "open_screenshots", "label": "Open Screenshots", "open": "screenshots" }
+  ],
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{install}/tlagba.ini" }]
+    }
+  ],
+  "settings": [
+    {
+      "id": "fullscreen",
+      "label": "Fullscreen",
+      "group": "Video",
+      "help": "Borderless fullscreen. F11 or Alt+Enter also switches it in game.",
+      "choices": [
+        { "label": "Off", "set": { "window/fullscreen": "no" } },
+        { "label": "On", "set": { "window/fullscreen": "yes" } }
+      ],
+      "defaults": { "window/fullscreen": "no" }
+    },
+    {
+      "id": "scale",
+      "label": "Window size",
+      "group": "Video",
+      "help": "How many times the GBA's 240x160 screen the window starts at.",
+      "when": { "window/fullscreen": "no" },
+      "choices": [
+        { "label": "2x", "set": { "window/scale": "2" } },
+        { "label": "3x", "set": { "window/scale": "3" } },
+        { "label": "4x", "set": { "window/scale": "4" } },
+        { "label": "5x", "set": { "window/scale": "5" } },
+        { "label": "6x", "set": { "window/scale": "6" } }
+      ],
+      "defaults": { "window/scale": "3" }
+    },
+    {
+      "id": "frame_rate",
+      "label": "Frame rate",
+      "group": "Video",
+      "help": "60 fps is smooth on PC monitors. Original runs at the GBA's own 59.73 fps.",
+      "choices": [
+        { "label": "60 fps", "set": { "window/frame_rate": "60" } },
+        { "label": "Original (59.73 fps)", "set": { "window/frame_rate": "original" } }
+      ],
+      "defaults": { "window/frame_rate": "60" }
+    },
+    {
+      "id": "vsync",
+      "label": "V-Sync",
+      "group": "Video",
+      "help": "Shows each frame on a monitor refresh at 60, 120 or 240 Hz. Other refresh rates use a precise timer.",
+      "choices": [
+        { "label": "On", "set": { "window/vsync": "yes" } },
+        { "label": "Off", "set": { "window/vsync": "no" } }
+      ],
+      "defaults": { "window/vsync": "yes" }
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "group": "Audio",
+      "slider": { "key": "audio/volume", "min": 0, "max": 100, "step": 10, "format": "%.0f" },
+      "defaults": { "audio/volume": "100" }
+    },
+    {
+      "id": "analog",
+      "label": "Left stick moves",
+      "group": "Controls",
+      "help": "Use the gamepad's left stick as the D-pad too.",
+      "choices": [
+        { "label": "On", "set": { "gamepad/analog": "yes" } },
+        { "label": "Off", "set": { "gamepad/analog": "no" } }
+      ],
+      "defaults": { "gamepad/analog": "yes" }
+    }
+  ],
+  "looks": {
+    "allowed": false,
+    "reason": "The game draws with GDI, which ReShade can't hook."
+  },
+  "system": {
+    "windows": { "version": "10" }
+  }
+}
